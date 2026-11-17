@@ -1,0 +1,18 @@
+[tools]
+bun = "latest"
+
+[tasks.install]
+description = "Install plugin dependencies"
+run = "bun install"
+
+[tasks.typecheck]
+description = "Run TypeScript type checking"
+run = "bun run typecheck"
+
+[tasks.test]
+description = "Run unit and OpenTUI rendering tests"
+run = "bun run test"
+
+[tasks.check]
+description = "Run typecheck and tests"
+depends = ["typecheck", "test"]

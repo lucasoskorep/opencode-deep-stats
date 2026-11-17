@@ -24,6 +24,7 @@ import type {
   ProjectUsageRow,
   StatsRangeKey,
   TimeSeriesBucket,
+  ToolSeriesBucket,
   ToolUsageRow,
   TopSessionRow,
   WeekdayBucket,
@@ -955,6 +956,19 @@ export class DeepStatsStore {
         })),
       },
       models: [],
+      toolSeries: {
+        topTools: [],
+        buckets: orderedBuckets.map((b) => ({
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byTool: {},
+        })),
+      },
       agents: [],
       tools: [],
       hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, prompts: 0, steps: 0, tokens: 0, cost: 0 })),
@@ -1269,6 +1283,7 @@ export class DeepStatsStore {
 
       const tokenSeriesMap = new Map<string, TimeSeriesBucket>();
       const modelSeriesMap = new Map<string, ModelSeriesBucket>();
+      const toolSeriesMap = new Map<string, ToolSeriesBucket>();
       for (const b of orderedBuckets) {
         tokenSeriesMap.set(b.key, {
           ...b,
@@ -1290,6 +1305,16 @@ export class DeepStatsStore {
           totalTokens: 0,
           totalSteps: 0,
           byModel: {},
+        });
+        toolSeriesMap.set(b.key, {
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byTool: {},
         });
       }
 
@@ -1559,6 +1584,21 @@ export class DeepStatsStore {
         tAgg.durSum += r.dur_sum;
         tAgg.durCnt += r.dur_cnt;
         mergeSerializedHist(tAgg.durHist, r.dur_hist);
+
+        const bMeta = dayBucketMap.get(day);
+        const tsb = bMeta ? toolSeriesMap.get(bMeta.key) : undefined;
+        if (tsb) {
+          tsb.totalCalls += r.calls;
+          tsb.succeeded += r.succeeded;
+          tsb.failed += r.failed;
+          tsb.unfinished += r.unfinished;
+          tsb.byTool[r.tool_name] = (tsb.byTool[r.tool_name] ?? 0) + r.calls;
+        }
+      }
+
+      for (const tsb of toolSeriesMap.values()) {
+        const finished = tsb.succeeded + tsb.failed;
+        tsb.errorPct = finished > 0 ? (tsb.failed / finished) * 100 : 0;
       }
 
       // Streaks & active days from activityByDay
@@ -1650,6 +1690,8 @@ export class DeepStatsStore {
         })
         .sort((a, b) => b.calls - a.calls);
 
+      const topTools = tools.slice(0, 5).map((t) => t.name);
+
       const projects: ProjectUsageRow[] = [...projectAgg.values()]
         .filter((p) => p.sessions > 0 || p.steps > 0 || p.tokens > 0)
         .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || b.sessions - a.sessions);
@@ -1721,6 +1763,10 @@ export class DeepStatsStore {
           buckets: orderedBuckets.map((b) => modelSeriesMap.get(b.key)!),
         },
         models,
+        toolSeries: {
+          topTools,
+          buckets: orderedBuckets.map((b) => toolSeriesMap.get(b.key)!),
+        },
         agents,
         tools,
         hourly,

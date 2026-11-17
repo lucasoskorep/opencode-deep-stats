@@ -210,6 +210,22 @@ function createMockStats(): DeepStatsPayload {
       { name: "shell", isMcp: false, calls: 5_000, succeeded: 4_990, failed: 10, unfinished: 0, errorPct: 0.2, p50Ms: 420, p95Ms: 2_400, avgMs: 610 },
       { name: "jira_get_issue", isMcp: true, calls: 120, succeeded: 118, failed: 2, unfinished: 0, errorPct: 1.7, p50Ms: 310, p95Ms: 890, avgMs: 350 },
     ],
+    toolSeries: {
+      topTools: ["shell", "jira_get_issue"],
+      buckets: days.map((date, idx) => ({
+        key: date,
+        label: date.slice(5),
+        totalCalls: 1_500 + idx * 300,
+        succeeded: 1_495 + idx * 300,
+        failed: 5,
+        unfinished: 0,
+        errorPct: 0.3,
+        byTool: {
+          shell: 1_460 + idx * 290,
+          jira_get_issue: 40 + idx * 10,
+        },
+      })),
+    },
     hourly: Array.from({ length: 24 }, (_, hour) => ({
       hour,
       prompts: hour >= 9 && hour <= 17 ? 24 : 4,
@@ -301,6 +317,7 @@ describe("DeepStatsScreen TUI rendering", () => {
     { tab: "tokens", expectedText: "TOKEN USAGE OVER TIME" },
     { tab: "models", expectedText: "MODEL USAGE OVER TIME" },
     { tab: "github", expectedText: "PRs OPENED VS APPROVALS OVER TIME" },
+    { tab: "tools", expectedText: "TOOL CALLS OVER TIME" },
     { tab: "activity", expectedText: "24-HOUR RHYTHM" },
     { tab: "all", expectedText: "COST & TOKENS" },
   ];

@@ -17,7 +17,8 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
   - Merge rate, median time-to-merge, approval rate, PR diff sizes
   - Dual PRs Opened vs Approvals timeline chart
   - Top repositories breakdown & AI efficiency ratios (`$/PR`, `tokens/PR`, `prompts/PR`, `sessions/PR`)
-- **Activity, Tools, Projects & Sessions** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, tool reliability with p50/p95 latencies, external/MCP tool metrics, top projects, and heaviest sessions.
+- **Dedicated Tools View (`[5] Tools`)** — Tool mix stacked summary (`built-in` vs `mcp/plugin`, calls/day, calls/step, success rate), tool call & error sparklines, stacked **Tool Calls Over Time** timeline, full **Tool Reliability & Latency** table (`calls`, `err%`, `p50`, `p95`, `avg`), and external/MCP tools breakdown.
+- **Activity, Agents, Projects & Sessions (`[6] Activity`)** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, top projects, and heaviest sessions.
 - **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v1.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
 - **Agent Tool Included** — Registers a `deep_stats` tool on the OpenCode server so you can also query your analytics directly in conversation.
 
@@ -32,8 +33,11 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
 ### GitHub PRs & Approvals Per Day (`[4] GitHub`)
 ![GitHub PR velocity, average opened PRs/day, average approvals/day, and timeline](assets/github.png)
 
-### Activity Rhythm & Tool Latency (`[5] Activity`)
-![24-hour coding rhythm, day-of-week distribution, agents, and tool p50/p95 latency](assets/activity.png)
+### Tool Calls Over Time & Reliability (`[5] Tools`)
+![Tool summary mix, sparklines, and daily stacked tool calls over time](assets/tools.png)
+
+### Activity Rhythm, Agents & Sessions (`[6] Activity`)
+![24-hour coding rhythm, day-of-week distribution, agents, projects, and heaviest sessions](assets/activity.png)
 
 ## Requirements
 
@@ -132,6 +136,7 @@ You can also pass arguments directly to jump to a range or tab:
 ```text
 /deep-stats 7d
 /deep-stats 90d github
+/deep-stats tools
 /deep-stats models
 /deep-stats tokens
 /deep-stats full
@@ -141,7 +146,7 @@ You can also pass arguments directly to jump to a range or tab:
 
 | Key | Action |
 | --- | --- |
-| `1`–`5`, `0` | Switch views (`Overview`, `Tokens`, `Models`, `GitHub`, `Activity`, `All`) |
+| `1`–`6`, `0` | Switch views (`Overview`, `Tokens`, `Models`, `GitHub`, `Tools`, `Activity`, `All`) |
 | `Tab` / `Shift+Tab` | Next / previous view |
 | `[` / `]` or `t` | Cycle time range (`7D`, `30D`, `90D`, `YTD`, `ALL`) |
 | `p` | Toggle scope (`all projects` ↔ `current project`, including detected GitHub repo) |
@@ -162,10 +167,14 @@ You can also pass arguments directly to jump to a range or tab:
 
 ## Development
 
+Uses [mise](https://mise.jdx.dev/) to manage Bun and development tasks (`mise.toml`):
+
 ```sh
-bun install
-bun run typecheck
-bun test
+mise install
+mise run install
+mise run typecheck
+mise run test
+mise run check      # runs typecheck + test
 ```
 
 ## License

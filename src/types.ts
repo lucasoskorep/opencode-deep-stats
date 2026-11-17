@@ -114,6 +114,17 @@ export type ToolUsageRow = {
   avgMs?: number;
 };
 
+export type ToolSeriesBucket = {
+  key: string;
+  label: string;
+  totalCalls: number;
+  succeeded: number;
+  failed: number;
+  unfinished: number;
+  errorPct: number;
+  byTool: Record<string, number>;
+};
+
 export type HourlyBucket = {
   hour: number;
   prompts: number;
@@ -298,6 +309,10 @@ export type DeepStatsPayload = {
     buckets: ModelSeriesBucket[];
   };
   models: ModelUsageRow[];
+  toolSeries: {
+    topTools: string[];
+    buckets: ToolSeriesBucket[];
+  };
   agents: AgentUsageRow[];
   tools: ToolUsageRow[];
   hourly: HourlyBucket[];

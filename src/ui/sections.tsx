@@ -1005,6 +1005,331 @@ export function GitHubSection(props: {
   );
 }
 
+export function ToolsSection(props: {
+  stats: DeepStatsPayload;
+  width: number;
+  theme: () => ResolvedTheme;
+}) {
+  const s = () => props.stats;
+  const palette = createMemo(() => getSeriesPalette(props.theme()));
+  const topTools = () => s().toolSeries.topTools;
+  const buckets = () => s().toolSeries.buckets;
+
+  const totalCalls = () => s().summary.tools.calls;
+  const finishedCalls = () => s().summary.tools.succeeded + s().summary.tools.failed;
+  const successRate = () =>
+    finishedCalls() > 0 ? (s().summary.tools.succeeded / finishedCalls()) * 100 : 100;
+
+  const mcpTools = createMemo(() => s().tools.filter((t) => t.isMcp));
+  const mcpCalls = createMemo(() => mcpTools().reduce((sum, t) => sum + t.calls, 0));
+  const builtinCalls = createMemo(() => Math.max(0, totalCalls() - mcpCalls()));
+  const maxBucketCalls = createMemo(() => Math.max(1, ...buckets().map((b) => b.totalCalls)));
+  const maxToolCalls = createMemo(() => Math.max(1, ...s().tools.map((t) => t.calls)));
+  const barWidth = () => Math.max(10, Math.min(44, props.width - 44));
+  const otherColor = () => props.theme().text.muted;
+
+  const topToolCounts = createMemo(() => {
+    const byName = new Map(s().tools.map((t) => [t.name, t.calls]));
+    return topTools().map((name, idx) => ({
+      name,
+      calls: byName.get(name) ?? 0,
+      color: palette()[idx % palette().length]!,
+    }));
+  });
+  const topSum = createMemo(() => topToolCounts().reduce((acc, item) => acc + item.calls, 0));
+  const otherTotalCalls = createMemo(() => Math.max(0, totalCalls() - topSum()));
+
+  return (
+    <box flexDirection="column" width="100%" gap={2}>
+      {/* Tool Mix & Velocity */}
+      <SectionPanel
+        title="TOOL SUMMARY & MIX"
+        subtitle={`${s().tools.length} distinct tools · ${formatInt(totalCalls())} calls`}
+        theme={props.theme}
+      >
+        <StackedBar
+          total={Math.max(1, totalCalls())}
+          width={Math.max(16, props.width - 8)}
+          emptyColor={props.theme().background.raised.high}
+          segments={[
+            ...topToolCounts().map((item) => ({ value: item.calls, color: item.color })),
+            { value: otherTotalCalls(), color: otherColor() },
+          ]}
+        />
+        <box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={0} marginTop={1}>
+          <For each={topToolCounts()}>
+            {(item) => (
+              <box flexDirection="row" gap={1}>
+                <text fg={item.color}>■</text>
+                <text fg={props.theme().text.base}>
+                  {item.name} {compactNumber(item.calls)} (
+                  {formatPct(totalCalls() > 0 ? (item.calls / totalCalls()) * 100 : 0)})
+                </text>
+              </box>
+            )}
+          </For>
+          <Show when={otherTotalCalls() > 0}>
+            <box flexDirection="row" gap={1}>
+              <text fg={otherColor()}>■</text>
+              <text fg={props.theme().text.muted}>
+                other ({Math.max(0, s().tools.length - topTools().length)}) {compactNumber(otherTotalCalls())}
+              </text>
+            </box>
+          </Show>
+        </box>
+
+        <box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={2} marginTop={1}>
+          <StatTile
+            value={compactNumber(totalCalls())}
+            label="total calls"
+            sublabel={`${compactNumber(totalCalls() / Math.max(1, s().summary.activeDays))}/act`}
+            theme={props.theme}
+          />
+          <StatTile
+            value={compactNumber(totalCalls() / Math.max(1, s().meta.daysCount))}
+            label="calls / day"
+            theme={props.theme}
+          />
+          <StatTile
+            value={formatRate(totalCalls() / Math.max(1, s().summary.steps), 2)}
+            label="calls / step"
+            sublabel={`${formatRate(totalCalls() / Math.max(1, s().summary.prompts), 1)}/prompt`}
+            theme={props.theme}
+          />
+          <StatTile
+            value={formatPct(successRate())}
+            label="success rate"
+            sublabel={`${formatInt(s().summary.tools.failed)} err · ${formatInt(s().summary.tools.unfinished)} unf`}
+            color={props.theme().text.feedback.success.base}
+            theme={props.theme}
+          />
+          <StatTile
+            value={compactNumber(builtinCalls())}
+            label="built-in"
+            sublabel={`${formatPct(totalCalls() > 0 ? (builtinCalls() / totalCalls()) * 100 : 0)}`}
+            theme={props.theme}
+          />
+          <StatTile
+            value={compactNumber(mcpCalls())}
+            label="mcp / plugin"
+            sublabel={`${mcpTools().length} tools`}
+            color={props.theme().hue?.accent?.[200] ?? palette()[4]}
+            theme={props.theme}
+          />
+        </box>
+      </SectionPanel>
+
+      {/* Tool Trend Sparklines */}
+      <SectionPanel
+        title="TOOL TREND SPARKLINES"
+        subtitle={`by ${s().meta.bucketGranularity}`}
+        theme={props.theme}
+      >
+        <SparkStrip
+          label="tool calls"
+          values={buckets().map((b) => b.totalCalls)}
+          summaryText={`${formatInt(totalCalls())} calls`}
+          color={palette()[0] ?? props.theme().text.base}
+          maxBars={Math.max(12, props.width - 36)}
+          theme={props.theme}
+        />
+        <SparkStrip
+          label="tool errors"
+          values={buckets().map((b) => b.failed)}
+          summaryText={`${formatInt(s().summary.tools.failed)} errors`}
+          color={props.theme().text.feedback.error.base}
+          maxBars={Math.max(12, props.width - 36)}
+          theme={props.theme}
+        />
+      </SectionPanel>
+
+      {/* Tool Calls Over Time Stacked Timeline */}
+      <SectionPanel
+        title="TOOL CALLS OVER TIME"
+        subtitle={`per ${s().meta.bucketGranularity} · ${buckets().length} buckets`}
+        theme={props.theme}
+      >
+        <box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={0} marginBottom={1}>
+          <For each={topTools()}>
+            {(toolName, idx) => (
+              <box flexDirection="row" gap={1}>
+                <text fg={palette()[idx() % palette().length]}>■</text>
+                <text fg={props.theme().text.base}>{toolName}</text>
+              </box>
+            )}
+          </For>
+          <Show when={s().tools.length > topTools().length}>
+            <box flexDirection="row" gap={1}>
+              <text fg={otherColor()}>■</text>
+              <text fg={props.theme().text.muted}>other ({s().tools.length - topTools().length})</text>
+            </box>
+          </Show>
+        </box>
+
+        <TableRowLine
+          theme={props.theme}
+          cells={[
+            { text: s().meta.bucketGranularity === "week" ? "week" : "date", width: 6, color: props.theme().text.muted },
+            { text: "tools", width: barWidth(), color: props.theme().text.muted },
+            { text: "calls", width: 7, align: "right", color: props.theme().text.muted },
+            { text: "err%", width: 6, align: "right", color: props.theme().text.muted },
+            ...(props.width >= 72
+              ? [{ text: "top tool", width: 16, color: props.theme().text.muted }]
+              : []),
+          ]}
+        />
+
+        <For each={[...buckets()].reverse().slice(0, 40)}>
+          {(b) => {
+            const topEntries = () =>
+              topTools().map((toolName, idx) => ({
+                value: b.byTool[toolName] ?? 0,
+                color: palette()[idx % palette().length]!,
+              }));
+            const sumTop = () => topEntries().reduce((acc, e) => acc + e.value, 0);
+            const otherVal = () => Math.max(0, b.totalCalls - sumTop());
+
+            const dominant = createMemo(() => {
+              let bestName = "-";
+              let bestVal = 0;
+              for (const [k, v] of Object.entries(b.byTool)) {
+                if (v > bestVal) {
+                  bestVal = v;
+                  bestName = k;
+                }
+              }
+              return {
+                name: bestName,
+                pct: b.totalCalls > 0 ? (bestVal / b.totalCalls) * 100 : 0,
+              };
+            });
+
+            const emptyCol = () => mixColor(props.theme().background.raised.base, props.theme().text.muted, 0.2);
+
+            return (
+              <box flexDirection="row" width="100%" height={1} gap={1}>
+                <text fg={props.theme().text.muted}>{b.label.padEnd(6)}</text>
+                <StackedBar
+                  total={maxBucketCalls()}
+                  width={barWidth()}
+                  emptyColor={emptyCol()}
+                  segments={[...topEntries(), { value: otherVal(), color: otherColor() }]}
+                />
+                <text fg={props.theme().text.base} attributes={TextAttributes.BOLD}>
+                  {compactNumber(b.totalCalls).padStart(7)}
+                </text>
+                <text
+                  fg={
+                    b.errorPct >= 5
+                      ? props.theme().text.feedback.error.base
+                      : props.theme().text.muted
+                  }
+                >
+                  {formatPct(b.errorPct).padStart(6)}
+                </text>
+                <Show when={props.width >= 72}>
+                  <text fg={props.theme().text.muted}>
+                    {dominant().pct > 0 ? `${truncate(dominant().name, 11)} ${Math.round(dominant().pct)}%` : "-"}
+                  </text>
+                </Show>
+              </box>
+            );
+          }}
+        </For>
+      </SectionPanel>
+
+      {/* Full Tool Reliability & Latency Table */}
+      <SectionPanel
+        title="TOOL RELIABILITY & LATENCY"
+        subtitle={`${formatInt(totalCalls())} total calls`}
+        theme={props.theme}
+      >
+        <Show when={s().tools.length > 0} fallback={<text fg={props.theme().text.muted}>No tool calls</text>}>
+          <TableRowLine
+            theme={props.theme}
+            cells={[
+              { text: "tool", width: Math.max(14, props.width - 68), color: props.theme().text.muted },
+              { text: "share", width: 6, align: "right", color: props.theme().text.muted },
+              { text: "calls", width: 8, align: "right", color: props.theme().text.muted },
+              { text: "err", width: 6, align: "right", color: props.theme().text.muted },
+              { text: "err%", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "p50", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "p95", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "avg", width: 7, align: "right", color: props.theme().text.muted },
+            ]}
+          />
+          <For each={s().tools.slice(0, 20)}>
+            {(tool) => {
+              const nameW = () => Math.max(14, props.width - 68);
+              const share = () => (totalCalls() > 0 ? (tool.calls / totalCalls()) * 100 : 0);
+              return (
+                <TableRowLine
+                  theme={props.theme}
+                  cells={[
+                    {
+                      text: tool.name,
+                      width: nameW(),
+                      color: tool.isMcp
+                        ? props.theme().hue?.accent?.[200] ?? props.theme().text.base
+                        : props.theme().text.base,
+                    },
+                    { text: formatPct(share()), width: 6, align: "right", color: props.theme().text.muted },
+                    { text: compactNumber(tool.calls), width: 8, align: "right", bold: true },
+                    {
+                      text: formatInt(tool.failed),
+                      width: 6,
+                      align: "right",
+                      color: tool.failed > 0 ? props.theme().text.feedback.warning.base : props.theme().text.muted,
+                    },
+                    {
+                      text: formatPct(tool.errorPct),
+                      width: 7,
+                      align: "right",
+                      color: tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted,
+                    },
+                    { text: formatDurationMs(tool.p50Ms), width: 7, align: "right", color: props.theme().text.muted },
+                    { text: formatDurationMs(tool.p95Ms), width: 7, align: "right", color: props.theme().text.muted },
+                    { text: formatDurationMs(tool.avgMs), width: 7, align: "right", color: props.theme().text.muted },
+                  ]}
+                />
+              );
+            }}
+          </For>
+        </Show>
+      </SectionPanel>
+
+      {/* External / MCP Plugin Tools */}
+      <Show when={mcpTools().length > 0}>
+        <SectionPanel
+          title="EXTERNAL / MCP TOOLS"
+          subtitle={`${mcpTools().length} tools · ${formatInt(mcpCalls())} calls`}
+          theme={props.theme}
+        >
+          <For each={mcpTools().slice(0, 14)}>
+            {(tool) => {
+              const nameW = () => Math.max(18, props.width - 52);
+              return (
+                <box flexDirection="row" width="100%" height={1} gap={1}>
+                  <text fg={props.theme().hue?.accent?.[200] ?? props.theme().text.base}>
+                    {truncate(tool.name, nameW()).padEnd(nameW())}
+                  </text>
+                  <text fg={palette()[1]}>{barBlocks(tool.calls / maxToolCalls(), 12)}</text>
+                  <text fg={props.theme().text.base}>{compactNumber(tool.calls).padStart(7)}</text>
+                  <text fg={tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted}>
+                    {formatPct(tool.errorPct).padStart(6)}
+                  </text>
+                  <text fg={props.theme().text.muted}>{formatDurationMs(tool.p50Ms).padStart(7)}</text>
+                  <text fg={props.theme().text.muted}>{formatDurationMs(tool.p95Ms).padStart(7)}</text>
+                </box>
+              );
+            }}
+          </For>
+        </SectionPanel>
+      </Show>
+    </box>
+  );
+}
+
 export function ActivitySection(props: {
   stats: DeepStatsPayload;
   width: number;
@@ -1016,15 +1341,12 @@ export function ActivitySection(props: {
 
   const maxHourSteps = createMemo(() => Math.max(1, ...s().hourly.map((h) => h.steps)));
   const maxWeekdaySteps = createMemo(() => Math.max(1, ...s().weekday.map((w) => w.steps)));
-  const maxToolCalls = createMemo(() => Math.max(1, ...s().tools.map((t) => t.calls)));
 
   const peakHour = createMemo(() => {
     let best = s().hourly[0];
     for (const h of s().hourly) if (!best || h.steps > best.steps) best = h;
     return best;
   });
-
-  const mcpTools = createMemo(() => s().tools.filter((t) => t.isMcp));
 
   return (
     <box flexDirection="column" width="100%" gap={2}>
@@ -1163,80 +1485,6 @@ export function ActivitySection(props: {
           />
         </SectionPanel>
       </box>
-
-      {/* Tool Reliability & Latency */}
-      <SectionPanel
-        title="TOOL RELIABILITY & LATENCY"
-        subtitle={`${formatInt(s().summary.tools.calls)} total calls`}
-        theme={props.theme}
-      >
-        <TableRowLine
-          theme={props.theme}
-          cells={[
-            { text: "tool", width: Math.max(16, props.width - 54), color: props.theme().text.muted },
-            { text: "calls", width: 8, align: "right", color: props.theme().text.muted },
-            { text: "err%", width: 7, align: "right", color: props.theme().text.muted },
-            { text: "p50", width: 7, align: "right", color: props.theme().text.muted },
-            { text: "p95", width: 7, align: "right", color: props.theme().text.muted },
-            { text: "avg", width: 7, align: "right", color: props.theme().text.muted },
-          ]}
-        />
-        <For each={s().tools.slice(0, 16)}>
-          {(tool) => {
-            const nameW = () => Math.max(16, props.width - 54);
-            return (
-              <TableRowLine
-                theme={props.theme}
-                cells={[
-                  {
-                    text: tool.name,
-                    width: nameW(),
-                    color: tool.isMcp ? props.theme().hue?.accent?.[200] ?? props.theme().text.base : props.theme().text.base,
-                  },
-                  { text: compactNumber(tool.calls), width: 8, align: "right", bold: true },
-                  {
-                    text: formatPct(tool.errorPct),
-                    width: 7,
-                    align: "right",
-                    color: tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted,
-                  },
-                  { text: formatDurationMs(tool.p50Ms), width: 7, align: "right", color: props.theme().text.muted },
-                  { text: formatDurationMs(tool.p95Ms), width: 7, align: "right", color: props.theme().text.muted },
-                  { text: formatDurationMs(tool.avgMs), width: 7, align: "right", color: props.theme().text.muted },
-                ]}
-              />
-            );
-          }}
-        </For>
-      </SectionPanel>
-
-      {/* MCP / External Plugin Tools if any */}
-      <Show when={mcpTools().length > 0}>
-        <SectionPanel
-          title="EXTERNAL / MCP TOOLS"
-          subtitle={`${mcpTools().length} tools`}
-          theme={props.theme}
-        >
-          <For each={mcpTools().slice(0, 12)}>
-            {(tool) => {
-              const nameW = () => Math.max(18, props.width - 44);
-              return (
-                <box flexDirection="row" width="100%" height={1} gap={1}>
-                  <text fg={props.theme().hue?.accent?.[200] ?? props.theme().text.base}>
-                    {truncate(tool.name, nameW()).padEnd(nameW())}
-                  </text>
-                  <text fg={palette()[1]}>{barBlocks(tool.calls / maxToolCalls(), 12)}</text>
-                  <text fg={props.theme().text.base}>{compactNumber(tool.calls).padStart(7)}</text>
-                  <text fg={tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted}>
-                    {formatPct(tool.errorPct).padStart(6)}
-                  </text>
-                  <text fg={props.theme().text.muted}>{formatDurationMs(tool.p50Ms).padStart(7)}</text>
-                </box>
-              );
-            }}
-          </For>
-        </SectionPanel>
-      </Show>
 
       {/* Projects & Top Sessions */}
       <box flexDirection={wide() ? "row" : "column"} width="100%" gap={2}>

@@ -280,8 +280,12 @@ describe("DeepStatsAggregator & incremental SQLite rollup", () => {
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#xhigh");
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#medium");
 
-    // Tools: read, shell, jira_get_issue (MCP)
+    // Tools: read, shell, jira_get_issue (MCP) & toolSeries
     expect(grouped.tools.length).toBe(3);
+    expect(grouped.toolSeries.topTools.length).toBe(3);
+    expect(grouped.toolSeries.buckets.length).toBe(7);
+    const totalSeriesToolCalls = grouped.toolSeries.buckets.reduce((sum, b) => sum + b.totalCalls, 0);
+    expect(totalSeriesToolCalls).toBe(3);
     const jiraTool = grouped.tools.find((t) => t.name === "jira_get_issue");
     expect(jiraTool?.isMcp).toBe(true);
     expect(jiraTool?.errorPct).toBe(100);

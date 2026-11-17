@@ -17,16 +17,18 @@ import {
   ModelsSection,
   OverviewSection,
   TokensSection,
+  ToolsSection,
 } from "./sections.tsx";
 
-export type ViewTab = "overview" | "tokens" | "models" | "github" | "activity" | "all";
+export type ViewTab = "overview" | "tokens" | "models" | "github" | "tools" | "activity" | "all";
 
 const TABS: Array<{ id: ViewTab; key: string; label: string }> = [
   { id: "overview", key: "1", label: "Overview" },
   { id: "tokens", key: "2", label: "Tokens" },
   { id: "models", key: "3", label: "Models" },
   { id: "github", key: "4", label: "GitHub" },
-  { id: "activity", key: "5", label: "Activity" },
+  { id: "tools", key: "5", label: "Tools" },
+  { id: "activity", key: "6", label: "Activity" },
   { id: "all", key: "0", label: "All" },
 ];
 
@@ -159,7 +161,8 @@ export function DeepStatsScreen(props: {
       { bind: "2", title: "Tokens tab", run: () => selectTab("tokens") },
       { bind: "3", title: "Models tab", run: () => selectTab("models") },
       { bind: "4", title: "GitHub tab", run: () => selectTab("github") },
-      { bind: "5", title: "Activity tab", run: () => selectTab("activity") },
+      { bind: "5", title: "Tools tab", run: () => selectTab("tools") },
+      { bind: "6", title: "Activity tab", run: () => selectTab("activity") },
       { bind: "0", title: "All sections tab", run: () => selectTab("all") },
       { bind: "tab", title: "Next tab", run: () => cycleTab(1) },
       { bind: "shift+tab", title: "Previous tab", run: () => cycleTab(-1) },
@@ -231,7 +234,7 @@ export function DeepStatsScreen(props: {
 
           {/* Tabs + Time Range Controls */}
           <box
-            flexDirection={contentWidth() < 102 ? "column" : "row"}
+            flexDirection={contentWidth() < 108 ? "column" : "row"}
             justifyContent="space-between"
             width="100%"
             gap={1}
@@ -386,6 +389,9 @@ export function DeepStatsScreen(props: {
                   <Match when={tab() === "github"}>
                     <GitHubSection stats={data()} width={contentWidth()} theme={theme} />
                   </Match>
+                  <Match when={tab() === "tools"}>
+                    <ToolsSection stats={data()} width={contentWidth()} theme={theme} />
+                  </Match>
                   <Match when={tab() === "activity"}>
                     <ActivitySection stats={data()} width={contentWidth()} theme={theme} />
                   </Match>
@@ -407,6 +413,7 @@ export function DeepStatsScreen(props: {
                         theme={theme}
                       />
                       <GitHubSection stats={data()} width={contentWidth()} theme={theme} />
+                      <ToolsSection stats={data()} width={contentWidth()} theme={theme} />
                       <ActivitySection stats={data()} width={contentWidth()} theme={theme} />
                     </box>
                   </Match>
@@ -433,10 +440,10 @@ export function DeepStatsScreen(props: {
         >
           <text fg={theme().text.muted} wrapMode="none" selectable={false}>
             {contentWidth() >= 98
-              ? "1-5/0 view · [/]/t range · p scope · h heat · m metric · v var · r refresh · j/k scroll · esc back"
+              ? "1-6/0 view · [/]/t range · p scope · h heat · m metric · v var · r refresh · j/k scroll · esc back"
               : contentWidth() >= 66
-                ? "1-5/0 view · t range · p scope · r refresh · j/k · esc back"
-                : "1-5/0 · t range · r · esc"}
+                ? "1-6/0 view · t range · p scope · r refresh · j/k · esc back"
+                : "1-6/0 · t range · r · esc"}
           </text>
           <Show when={contentWidth() >= 64}>
             <text fg={theme().text.base} selectable={false}>
