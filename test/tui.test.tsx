@@ -446,6 +446,8 @@ describe("DeepStatsScreen TUI rendering", () => {
     expect(built).toContain("createComponent");
     expect(built).toContain("deep-stats");
     expect(built).not.toContain("solid-js/dist/server.js");
+    expect(built).not.toContain("dstats");
+    expect(built).not.toContain("stats+");
   });
 
   it("handles narrow terminal widths cleanly", async () => {

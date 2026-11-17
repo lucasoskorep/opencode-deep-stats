@@ -52,7 +52,7 @@ export default Plugin.define({
         : "deep-stats";
     const aliases = Array.isArray(context.options?.aliases)
       ? (context.options.aliases as unknown[]).filter((a): a is string => typeof a === "string")
-      : ["dstats", "stats+"];
+      : [];
 
     let cachedProjectId: string | undefined;
     let cachedProjectName: string | undefined;

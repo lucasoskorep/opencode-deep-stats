@@ -7371,7 +7371,7 @@ var tui_default = Plugin.define({
       ...context.ui.router.current()
     });
     const slashName = typeof context.options?.slashName === "string" && context.options.slashName.trim() ? context.options.slashName.trim() : "deep-stats";
-    const aliases = Array.isArray(context.options?.aliases) ? context.options.aliases.filter((a) => typeof a === "string") : ["dstats", "stats+"];
+    const aliases = Array.isArray(context.options?.aliases) ? context.options.aliases.filter((a) => typeof a === "string") : [];
     let cachedProjectId;
     let cachedProjectName;
     let resolvedLocation = false;

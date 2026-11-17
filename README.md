@@ -88,8 +88,7 @@ Or with options:
     {
       "package": "github:lucasoskorep/opencode-deep-stats",
       "options": {
-        "slashName": "deep-stats",
-        "aliases": ["dstats", "stats+"]
+        "slashName": "deep-stats"
       }
     }
   ]
@@ -134,7 +133,7 @@ OpenCode hot-reloads config changes automatically (or run `/reload` / `opencode 
 
 In the OpenCode TUI:
 
-- Run `/deep-stats` (aliases: `/dstats`, `/stats+`)
+- Run `/deep-stats`
 - Or open the Command Palette (`Ctrl+P`) and select **Deep usage statistics**
 
 You can also pass arguments directly to jump to a range or tab:
@@ -170,7 +169,7 @@ You can also pass arguments directly to jump to a range or tab:
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | Set `false` to disable the server or TUI plugin |
 | `slashName` | `string` | `"deep-stats"` | Custom slash command name (TUI) |
-| `aliases` | `string[]` | `["dstats", "stats+"]` | Slash command aliases (TUI) |
+| `aliases` | `string[]` | `[]` | Optional extra slash command aliases (TUI) |
 
 ## Development
 
