@@ -130,11 +130,28 @@ export type McpServerRow = {
   server: string;
   toolsCount: number;
   calls: number;
+  codemodeCalls: number;
+  directCalls: number;
   succeeded: number;
   failed: number;
   unfinished: number;
   errorPct: number;
   sharePct: number;
+  p50Ms?: number;
+  p95Ms?: number;
+  avgMs?: number;
+};
+
+export type McpToolRow = {
+  name: string;
+  server: string;
+  calls: number;
+  codemodeCalls: number;
+  directCalls: number;
+  succeeded: number;
+  failed: number;
+  unfinished: number;
+  errorPct: number;
   p50Ms?: number;
   p95Ms?: number;
   avgMs?: number;
@@ -341,12 +358,15 @@ export type DeepStatsPayload = {
   };
   mcp: {
     totalCalls: number;
+    codemodeCalls: number;
+    directCalls: number;
     succeeded: number;
     failed: number;
     unfinished: number;
     errorPct: number;
     shareOfAllToolsPct: number;
     servers: McpServerRow[];
+    tools: McpToolRow[];
     topServers: string[];
     buckets: McpSeriesBucket[];
   };

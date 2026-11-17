@@ -17,10 +17,10 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
   - Merge rate, median time-to-merge, approval rate, PR diff sizes
   - Dual PRs Opened vs Approvals timeline chart
   - Top repositories breakdown & AI efficiency ratios (`$/PR`, `tokens/PR`, `prompts/PR`, `sessions/PR`)
-- **Dedicated Tools View (`[5] Tools`)** — Tool mix stacked summary (`built-in` vs `mcp/plugin`, calls/day, calls/step, success rate), tool call & error sparklines, stacked **Tool Calls Over Time** timeline, and full **Tool Reliability & Latency** table (`calls`, `err%`, `p50`, `p95`, `avg`).
-- **Dedicated MCP View (`[6] MCP`)** — Groups external MCP calls by server (`buildkite`, `datadog`, `jira`, `chrome-devtools`, `excalidraw`, etc.) with stacked **MCP Server Mix**, trend sparklines, **MCP Calls Over Time** timeline, per-server reliability & latency (`p50`, `p95`, `avg`), and top individual MCP tools.
+- **Dedicated Tools View (`[5] Tools`)** — Tool mix stacked summary (`built-in` vs `mcp calls`, calls/day, calls/step, success rate), tool call & error sparklines, stacked **Tool Calls Over Time** timeline, and full **Tool Reliability & Latency** table (`calls`, `err%`, `p50`, `p95`, `avg`).
+- **Dedicated MCP View (`[6] MCP`)** — Tracks both **Code Mode (`execute`)** nested MCP tool calls and direct MCP calls, grouped by server (`buildkite`, `datadog`, `jira`, `chrome-devtools`, `excalidraw`, etc.) with stacked **MCP Server Mix**, trend sparklines, **MCP Calls Over Time** timeline, per-server reliability & latency (`p50`, `p95`, `avg`), and top individual MCP tools.
 - **Activity, Agents, Projects & Sessions (`[7] Activity`)** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, top projects, and heaviest sessions.
-- **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v1.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
+- **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v2.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
 - **Agent Tool Included** — Registers a `deep_stats` tool on the OpenCode server so you can also query your analytics directly in conversation.
 
 ## Screenshots
@@ -55,7 +55,7 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
 
 ## How Data Is Collected
 
-- **OpenCode analytics** — Read locally (read-only) from OpenCode's SQLite database (`opencode.db`) and incrementally rolled up into `~/.cache/opencode/deep-stats-rollup.v1.db`.
+- **OpenCode analytics** — Read locally (read-only) from OpenCode's SQLite database (`opencode.db`) and incrementally rolled up into `~/.cache/opencode/deep-stats-rollup.v2.db`.
 - **GitHub PRs & approvals** — Runs `gh auth token` locally to authenticate with GitHub GraphQL, resolves the active user via `viewer.login`, and searches PRs authored by you (`is:pr author:<login>`) and PRs reviewed by you (`is:pr reviewed-by:<login>`) to count opened PRs, merges, and review approvals over time. Results are cached for 5 minutes in `~/.cache/opencode/deep-stats-github.v1.json`.
 
 ## Install

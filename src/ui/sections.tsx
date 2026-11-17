@@ -1110,9 +1110,9 @@ export function ToolsSection(props: {
             theme={props.theme}
           />
           <StatTile
-            value={compactNumber(mcpCalls())}
-            label="mcp / plugin"
-            sublabel={`${mcpTools().length} tools`}
+            value={compactNumber(s().mcp.totalCalls)}
+            label="mcp calls"
+            sublabel={`${s().mcp.servers.length} srv · ${s().mcp.tools.length} tools`}
             color={props.theme().hue?.accent?.[200] ?? palette()[4]}
             theme={props.theme}
           />
@@ -1309,7 +1309,7 @@ export function McpSection(props: {
   const s = () => props.stats;
   const mcp = () => s().mcp;
   const palette = createMemo(() => getSeriesPalette(props.theme()));
-  const mcpTools = createMemo(() => s().tools.filter((t) => t.isMcp));
+  const mcpTools = () => mcp().tools;
   const topServers = () => mcp().topServers;
   const buckets = () => mcp().buckets;
 
@@ -1344,10 +1344,10 @@ export function McpSection(props: {
           fallback={
             <box flexDirection="column" gap={1}>
               <text fg={props.theme().text.muted}>
-                No direct MCP tool calls recorded in this time window.
+                No MCP calls recorded in this time window.
               </text>
               <text fg={props.theme().text.muted}>
-                Tip: Try [90D] / [YTD] / [ALL] for earlier direct MCP calls, or check [5] Tools for Code Mode `execute` calls.
+                Tracks both direct MCP tool calls and Code Mode `execute` calls (`state.metadata.toolCalls`).
               </text>
             </box>
           }
@@ -1387,7 +1387,7 @@ export function McpSection(props: {
             <StatTile
               value={compactNumber(totalMcp())}
               label="mcp calls"
-              sublabel={`${compactNumber(totalMcp() / Math.max(1, s().summary.activeDays))}/act`}
+              sublabel={`${compactNumber(mcp().codemodeCalls)} cm · ${compactNumber(mcp().directCalls)} dir`}
               color={props.theme().hue?.accent?.[200] ?? palette()[4]}
               theme={props.theme}
             />

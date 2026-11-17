@@ -128,6 +128,18 @@ function createTestOpencodeDb(dbPath: string, nowMs: number) {
           time: { created: day1 + 3_100, ran: day1 + 3_105, completed: day1 + 3_505 },
           state: { status: "error" },
         },
+        {
+          type: "tool",
+          name: "diff_search",
+          time: { created: day1 + 3_600, ran: day1 + 3_601, completed: day1 + 3_605 },
+          state: {
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: 'No tool named "diff_search" is currently available.',
+            },
+          },
+        },
       ],
     }),
   );
@@ -170,6 +182,23 @@ function createTestOpencodeDb(dbPath: string, nowMs: number) {
           name: "shell",
           time: { created: day2 + 4_000, ran: day2 + 4_000, completed: day2 + 4_500 },
           state: { status: "completed" },
+        },
+        {
+          type: "tool",
+          name: "execute",
+          time: { created: day2 + 4_600, ran: day2 + 4_601, completed: day2 + 5_100 },
+          state: {
+            status: "completed",
+            metadata: {
+              toolCalls: [
+                { tool: "buildkite.list_jobs", status: "completed" },
+                { tool: "buildkite.get_build", status: "completed" },
+                { tool: "jira.getJiraIssue", status: "completed" },
+                { tool: "search", status: "completed" },
+                { tool: "opencode.session_move", status: "completed" },
+              ],
+            },
+          },
         },
       ],
     }),
@@ -280,21 +309,30 @@ describe("DeepStatsAggregator & incremental SQLite rollup", () => {
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#xhigh");
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#medium");
 
-    // Tools: read, shell, jira_get_issue (MCP) & toolSeries + mcp
-    expect(grouped.tools.length).toBe(3);
-    expect(grouped.toolSeries.topTools.length).toBe(3);
+    // Tools: read, shell, execute, jira_get_issue (direct MCP), diff_search (hallucinated) + Code Mode nested MCP calls
+    expect(grouped.tools.length).toBe(5);
+    expect(grouped.toolSeries.topTools.length).toBe(5);
     expect(grouped.toolSeries.buckets.length).toBe(7);
     const totalSeriesToolCalls = grouped.toolSeries.buckets.reduce((sum, b) => sum + b.totalCalls, 0);
-    expect(totalSeriesToolCalls).toBe(3);
+    expect(totalSeriesToolCalls).toBe(5);
+    const diffSearchTool = grouped.tools.find((t) => t.name === "diff_search");
+    expect(diffSearchTool?.isMcp).toBe(false);
+    expect(diffSearchTool?.errorPct).toBe(100);
     const jiraTool = grouped.tools.find((t) => t.name === "jira_get_issue");
     expect(jiraTool?.isMcp).toBe(true);
     expect(jiraTool?.mcpServer).toBe("jira");
     expect(jiraTool?.errorPct).toBe(100);
-    expect(grouped.mcp.totalCalls).toBe(1);
-    expect(grouped.mcp.servers.length).toBe(1);
-    expect(grouped.mcp.servers[0]!.server).toBe("jira");
-    expect(grouped.mcp.servers[0]!.toolsCount).toBe(1);
-    expect(grouped.mcp.topServers).toEqual(["jira"]);
+    // MCP includes 1 direct (jira_get_issue) + 3 Code Mode (buildkite.list_jobs, buildkite.get_build, jira.getJiraIssue)
+    // and excludes Code Mode builtins ("search", "opencode.session_move") + unknown-tool errors ("diff_search")
+    expect(grouped.mcp.totalCalls).toBe(4);
+    expect(grouped.mcp.directCalls).toBe(1);
+    expect(grouped.mcp.codemodeCalls).toBe(3);
+    expect(grouped.mcp.servers.length).toBe(2);
+    expect(grouped.mcp.servers.find((s) => s.server === "buildkite")?.calls).toBe(2);
+    expect(grouped.mcp.servers.find((s) => s.server === "jira")?.calls).toBe(2);
+    expect(grouped.mcp.tools.map((t) => t.name)).not.toContain("search");
+    expect(grouped.mcp.tools.map((t) => t.name)).not.toContain("opencode.session_move");
+    expect(grouped.mcp.tools.map((t) => t.name)).not.toContain("diff_search");
     const readTool = grouped.tools.find((t) => t.name === "read");
     expect(readTool?.isMcp).toBe(false);
     expect(readTool?.errorPct).toBe(0);

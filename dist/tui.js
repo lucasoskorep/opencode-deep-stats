@@ -410,11 +410,27 @@ var BUILTIN_TOOLS = new Set([
   "background_list",
   "call_omo_agent",
   "look_at",
+  "ast_grep_search",
+  "ast_grep_replace",
+  "session_list",
+  "session_read",
+  "session_search",
+  "session_info",
+  "interactive_bash",
+  "schedule_job",
+  "get_job",
+  "run_job",
+  "update_job",
+  "delete_job",
+  "job_logs",
+  "cleanup_global",
   "codesearch",
   "batch",
   "invalid",
   "deep_stats"
 ]);
+var CODEMODE_BUILTIN_SERVERS = new Set(["opencode", "tools"]);
+var CODEMODE_BUILTIN_TOOLS = new Set(["search", "fetch"]);
 function isMcpToolName(name) {
   if (BUILTIN_TOOLS.has(name))
     return false;
@@ -428,15 +444,35 @@ function extractMcpServer(name) {
     const sep = rest.indexOf("__");
     return sep > 0 ? rest.slice(0, sep) : rest || "mcp";
   }
+  const dot = name.indexOf(".");
+  if (dot > 0)
+    return name.slice(0, dot);
   if (name.startsWith("grep_app_"))
     return "grep_app";
   const idx = name.indexOf("_");
   if (idx > 0)
     return name.slice(0, idx);
-  const dot = name.indexOf(".");
-  if (dot > 0)
-    return name.slice(0, dot);
   return "other";
+}
+function parseCodemodeMcpCall(rawTool) {
+  const trimmed = rawTool.trim();
+  if (!trimmed || trimmed.includes(" "))
+    return;
+  if (CODEMODE_BUILTIN_TOOLS.has(trimmed) || BUILTIN_TOOLS.has(trimmed))
+    return;
+  const dot = trimmed.indexOf(".");
+  if (dot > 0) {
+    const server = trimmed.slice(0, dot);
+    if (CODEMODE_BUILTIN_SERVERS.has(server) || BUILTIN_TOOLS.has(server))
+      return;
+    return { server, toolName: trimmed };
+  }
+  if (!isMcpToolName(trimmed))
+    return;
+  const server = extractMcpServer(trimmed);
+  if (CODEMODE_BUILTIN_SERVERS.has(server))
+    return;
+  return { server, toolName: trimmed };
 }
 var WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 var HIST_SCALE = 6;
@@ -511,8 +547,9 @@ function resolveDefaultOpencodeDbPath() {
 }
 function resolveDefaultCacheDbPath() {
   const cacheHome = process.env.XDG_CACHE_HOME || join(process.env.HOME || "", ".cache");
-  return join(cacheHome, "opencode", "deep-stats-rollup.v1.db");
+  return join(cacheHome, "opencode", "deep-stats-rollup.v2.db");
 }
+var ROLLUP_SCHEMA_VERSION = "2.1";
 function initCacheSchema(cache) {
   cache.exec(`
     PRAGMA journal_mode = WAL;
@@ -574,7 +611,28 @@ function initCacheSchema(cache) {
       PRIMARY KEY (hour_id, project_id, tool_name)
     );
     CREATE INDEX IF NOT EXISTS agg_tool_hour_idx ON agg_tool (hour_id);
+    CREATE TABLE IF NOT EXISTS agg_mcp (
+      hour_id INTEGER NOT NULL,
+      project_id TEXT NOT NULL,
+      server TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      source TEXT NOT NULL,
+      calls INTEGER NOT NULL,
+      succeeded INTEGER NOT NULL,
+      failed INTEGER NOT NULL,
+      unfinished INTEGER NOT NULL,
+      dur_sum REAL NOT NULL,
+      dur_cnt INTEGER NOT NULL,
+      dur_hist TEXT NOT NULL,
+      PRIMARY KEY (hour_id, project_id, server, tool_name, source)
+    );
+    CREATE INDEX IF NOT EXISTS agg_mcp_hour_idx ON agg_mcp (hour_id);
   `);
+  const row = cache.query("SELECT value FROM meta WHERE key = 'schema_version'").get();
+  if (row?.value !== ROLLUP_SCHEMA_VERSION) {
+    cache.exec("DELETE FROM hour_status; DELETE FROM agg_model; DELETE FROM agg_user; DELETE FROM agg_tool; DELETE FROM agg_mcp;");
+    cache.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(ROLLUP_SCHEMA_VERSION);
+  }
 }
 
 class DeepStatsStore {
@@ -643,9 +701,13 @@ class DeepStatsStore {
           s.project_id,
           json_extract(j.value, '$.name') as tool_name,
           json_extract(j.value, '$.state.status') as status,
+          json_extract(j.value, '$.state.error.message') as err_msg,
           json_extract(j.value, '$.time.created') as tt_created,
           json_extract(j.value, '$.time.ran') as tt_ran,
-          json_extract(j.value, '$.time.completed') as tt_comp
+          json_extract(j.value, '$.time.completed') as tt_comp,
+          CASE WHEN json_extract(j.value, '$.name') = 'execute'
+               THEN json_extract(j.value, '$.state.metadata.toolCalls')
+               ELSE NULL END as codemode_calls
          FROM session_message m
          LEFT JOIN session_v2 s ON s.id = m.session_id
          JOIN json_each(m.data, '$.content') j
@@ -655,6 +717,7 @@ class DeepStatsStore {
     const modelMap = new Map;
     const userMap = new Map;
     const toolMap = new Map;
+    const mcpMap = new Map;
     for (const row of msgRows) {
       const hourId = Math.floor(row.time_created / 3600000);
       const projectId = row.project_id || "global";
@@ -769,19 +832,98 @@ class DeepStatsStore {
       else
         acc.unfinished += 1;
       const tStart = row.tt_ran ?? row.tt_created;
+      let durMs;
       if (tStart && row.tt_comp && row.tt_comp >= tStart) {
         const dur = row.tt_comp - tStart;
         if (dur >= 0 && dur < 3600000) {
+          durMs = dur;
           acc.dur_sum += dur;
           acc.dur_cnt += 1;
           const b = toHistBucket(dur);
           acc.dur_hist.set(b, (acc.dur_hist.get(b) ?? 0) + 1);
         }
       }
+      const isUnknownToolError = typeof row.err_msg === "string" && row.err_msg.startsWith("No tool named ");
+      if (!isUnknownToolError && isMcpToolName(toolName)) {
+        const server = extractMcpServer(toolName);
+        const mKey = `${hourId}|${projectId}|${server}|${toolName}|direct`;
+        let mAcc = mcpMap.get(mKey);
+        if (!mAcc) {
+          mAcc = {
+            hour_id: hourId,
+            project_id: projectId,
+            server,
+            tool_name: toolName,
+            source: "direct",
+            calls: 0,
+            succeeded: 0,
+            failed: 0,
+            unfinished: 0,
+            dur_sum: 0,
+            dur_cnt: 0,
+            dur_hist: new Map
+          };
+          mcpMap.set(mKey, mAcc);
+        }
+        mAcc.calls += 1;
+        if (row.status === "completed")
+          mAcc.succeeded += 1;
+        else if (row.status === "error")
+          mAcc.failed += 1;
+        else
+          mAcc.unfinished += 1;
+        if (durMs !== undefined) {
+          mAcc.dur_sum += durMs;
+          mAcc.dur_cnt += 1;
+          const b = toHistBucket(durMs);
+          mAcc.dur_hist.set(b, (mAcc.dur_hist.get(b) ?? 0) + 1);
+        }
+      }
+      if (row.codemode_calls) {
+        try {
+          const nested = JSON.parse(row.codemode_calls);
+          if (Array.isArray(nested)) {
+            for (const tc of nested) {
+              if (!tc || typeof tc.tool !== "string")
+                continue;
+              const parsed = parseCodemodeMcpCall(tc.tool);
+              if (!parsed)
+                continue;
+              const mKey = `${hourId}|${projectId}|${parsed.server}|${parsed.toolName}|codemode`;
+              let mAcc = mcpMap.get(mKey);
+              if (!mAcc) {
+                mAcc = {
+                  hour_id: hourId,
+                  project_id: projectId,
+                  server: parsed.server,
+                  tool_name: parsed.toolName,
+                  source: "codemode",
+                  calls: 0,
+                  succeeded: 0,
+                  failed: 0,
+                  unfinished: 0,
+                  dur_sum: 0,
+                  dur_cnt: 0,
+                  dur_hist: new Map
+                };
+                mcpMap.set(mKey, mAcc);
+              }
+              mAcc.calls += 1;
+              if (tc.status === "completed")
+                mAcc.succeeded += 1;
+              else if (tc.status === "error")
+                mAcc.failed += 1;
+              else
+                mAcc.unfinished += 1;
+            }
+          }
+        } catch {}
+      }
     }
     const delModel = cache.query("DELETE FROM agg_model WHERE hour_id >= ? AND hour_id <= ?");
     const delUser = cache.query("DELETE FROM agg_user WHERE hour_id >= ? AND hour_id <= ?");
     const delTool = cache.query("DELETE FROM agg_tool WHERE hour_id >= ? AND hour_id <= ?");
+    const delMcp = cache.query("DELETE FROM agg_mcp WHERE hour_id >= ? AND hour_id <= ?");
     const delHour = cache.query("DELETE FROM hour_status WHERE hour_id >= ? AND hour_id <= ?");
     const insHour = cache.query("INSERT OR REPLACE INTO hour_status (hour_id, row_count, max_updated) VALUES (?, ?, ?)");
     const insModel = cache.query(`
@@ -800,11 +942,17 @@ class DeepStatsStore {
         hour_id, project_id, tool_name, calls, succeeded, failed, unfinished, dur_sum, dur_cnt, dur_hist
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const insMcp = cache.query(`
+      INSERT INTO agg_mcp (
+        hour_id, project_id, server, tool_name, source, calls, succeeded, failed, unfinished, dur_sum, dur_cnt, dur_hist
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
     const metaByHour = new Map(hourMetaRows.map((r) => [r.h, r]));
     const tx = cache.transaction(() => {
       delModel.run(startHour, endHour);
       delUser.run(startHour, endHour);
       delTool.run(startHour, endHour);
+      delMcp.run(startHour, endHour);
       delHour.run(startHour, endHour);
       for (let h = startHour;h <= endHour; h += 1) {
         const meta = metaByHour.get(h);
@@ -819,6 +967,9 @@ class DeepStatsStore {
       for (const acc of toolMap.values()) {
         insTool.run(acc.hour_id, acc.project_id, acc.tool_name, acc.calls, acc.succeeded, acc.failed, acc.unfinished, acc.dur_sum, acc.dur_cnt, serializeHist(acc.dur_hist));
       }
+      for (const acc of mcpMap.values()) {
+        insMcp.run(acc.hour_id, acc.project_id, acc.server, acc.tool_name, acc.source, acc.calls, acc.succeeded, acc.failed, acc.unfinished, acc.dur_sum, acc.dur_cnt, serializeHist(acc.dur_hist));
+      }
     });
     tx();
   }
@@ -832,7 +983,7 @@ class DeepStatsStore {
     const recentCutoffHour = Math.floor((nowMs - recentWindowMs) / 3600000);
     const recentCutoffMs = recentCutoffHour * 3600000;
     if (forceRefresh) {
-      cache.exec("DELETE FROM hour_status; DELETE FROM agg_model; DELETE FROM agg_user; DELETE FROM agg_tool; DELETE FROM meta;");
+      cache.exec("DELETE FROM hour_status; DELETE FROM agg_model; DELETE FROM agg_user; DELETE FROM agg_tool; DELETE FROM agg_mcp; DELETE FROM meta;");
     }
     const recentMeta = source.query(`SELECT CAST(time_created / 3600000 AS INTEGER) as h, COUNT(*) as cnt, MAX(time_updated) as max_u
          FROM session_message
@@ -1113,12 +1264,15 @@ class DeepStatsStore {
       },
       mcp: {
         totalCalls: 0,
+        codemodeCalls: 0,
+        directCalls: 0,
         succeeded: 0,
         failed: 0,
         unfinished: 0,
         errorPct: 0,
         shareOfAllToolsPct: 0,
         servers: [],
+        tools: [],
         topServers: [],
         buckets: orderedBuckets.map((b) => ({
           key: b.key,
@@ -1311,6 +1465,7 @@ class DeepStatsStore {
       const modelRollups = cache.query(`SELECT * FROM agg_model WHERE hour_id >= ? AND hour_id <= ? ${projFilterSql}`).all(...projParams);
       const userRollups = cache.query(`SELECT * FROM agg_user WHERE hour_id >= ? AND hour_id <= ? ${projFilterSql}`).all(...projParams);
       const toolRollups = cache.query(`SELECT * FROM agg_tool WHERE hour_id >= ? AND hour_id <= ? ${projFilterSql}`).all(...projParams);
+      const mcpRollups = cache.query(`SELECT * FROM agg_mcp WHERE hour_id >= ? AND hour_id <= ? ${projFilterSql}`).all(...projParams);
       const tokenSeriesMap = new Map;
       const modelSeriesMap = new Map;
       const toolSeriesMap = new Map;
@@ -1532,14 +1687,100 @@ class DeepStatsStore {
       }
       const toolAggMap = new Map;
       const mcpServerMap = new Map;
+      const mcpToolMap = new Map;
+      const directMcpToolNames = new Set;
       let toolCalls = 0;
       let toolSucceeded = 0;
       let toolFailed = 0;
       let toolUnfinished = 0;
       let mcpTotalCalls = 0;
+      let mcpCodemodeCalls = 0;
+      let mcpDirectCalls = 0;
       let mcpSucceeded = 0;
       let mcpFailed = 0;
       let mcpUnfinished = 0;
+      for (const r of mcpRollups) {
+        const ts = r.hour_id * 3600000 + 1800000;
+        const day = formatDayInTz(ts, dayFmt);
+        if (day < fromDay || day > toDay)
+          continue;
+        mcpTotalCalls += r.calls;
+        if (r.source === "codemode")
+          mcpCodemodeCalls += r.calls;
+        else {
+          mcpDirectCalls += r.calls;
+          directMcpToolNames.add(r.tool_name);
+        }
+        mcpSucceeded += r.succeeded;
+        mcpFailed += r.failed;
+        mcpUnfinished += r.unfinished;
+        let sAgg = mcpServerMap.get(r.server);
+        if (!sAgg) {
+          sAgg = {
+            server: r.server,
+            tools: new Set,
+            calls: 0,
+            codemodeCalls: 0,
+            directCalls: 0,
+            succeeded: 0,
+            failed: 0,
+            unfinished: 0,
+            durSum: 0,
+            durCnt: 0,
+            durHist: new Map
+          };
+          mcpServerMap.set(r.server, sAgg);
+        }
+        sAgg.tools.add(r.tool_name);
+        sAgg.calls += r.calls;
+        if (r.source === "codemode")
+          sAgg.codemodeCalls += r.calls;
+        else
+          sAgg.directCalls += r.calls;
+        sAgg.succeeded += r.succeeded;
+        sAgg.failed += r.failed;
+        sAgg.unfinished += r.unfinished;
+        sAgg.durSum += r.dur_sum;
+        sAgg.durCnt += r.dur_cnt;
+        mergeSerializedHist(sAgg.durHist, r.dur_hist);
+        let mtAgg = mcpToolMap.get(r.tool_name);
+        if (!mtAgg) {
+          mtAgg = {
+            name: r.tool_name,
+            server: r.server,
+            calls: 0,
+            codemodeCalls: 0,
+            directCalls: 0,
+            succeeded: 0,
+            failed: 0,
+            unfinished: 0,
+            durSum: 0,
+            durCnt: 0,
+            durHist: new Map
+          };
+          mcpToolMap.set(r.tool_name, mtAgg);
+        }
+        mtAgg.calls += r.calls;
+        if (r.source === "codemode")
+          mtAgg.codemodeCalls += r.calls;
+        else
+          mtAgg.directCalls += r.calls;
+        mtAgg.succeeded += r.succeeded;
+        mtAgg.failed += r.failed;
+        mtAgg.unfinished += r.unfinished;
+        mtAgg.durSum += r.dur_sum;
+        mtAgg.durCnt += r.dur_cnt;
+        mergeSerializedHist(mtAgg.durHist, r.dur_hist);
+        const bMeta = dayBucketMap.get(day);
+        const msb = bMeta ? mcpSeriesMap.get(bMeta.key) : undefined;
+        if (msb) {
+          msb.totalCalls += r.calls;
+          msb.succeeded += r.succeeded;
+          msb.failed += r.failed;
+          msb.unfinished += r.unfinished;
+          msb.byServer[r.server] = (msb.byServer[r.server] ?? 0) + r.calls;
+        }
+      }
       for (const r of toolRollups) {
         const ts = r.hour_id * 3600000 + 1800000;
         const day = formatDayInTz(ts, dayFmt);
@@ -1549,7 +1790,7 @@ class DeepStatsStore {
         toolSucceeded += r.succeeded;
         toolFailed += r.failed;
         toolUnfinished += r.unfinished;
-        const isMcp = isMcpToolName(r.tool_name);
+        const isMcp = directMcpToolNames.has(r.tool_name);
         const mcpServer = isMcp ? extractMcpServer(r.tool_name) : undefined;
         let tAgg = toolAggMap.get(r.tool_name);
         if (!tAgg) {
@@ -1582,43 +1823,6 @@ class DeepStatsStore {
           tsb.failed += r.failed;
           tsb.unfinished += r.unfinished;
           tsb.byTool[r.tool_name] = (tsb.byTool[r.tool_name] ?? 0) + r.calls;
-        }
-        if (isMcp && mcpServer) {
-          mcpTotalCalls += r.calls;
-          mcpSucceeded += r.succeeded;
-          mcpFailed += r.failed;
-          mcpUnfinished += r.unfinished;
-          let sAgg = mcpServerMap.get(mcpServer);
-          if (!sAgg) {
-            sAgg = {
-              server: mcpServer,
-              tools: new Set,
-              calls: 0,
-              succeeded: 0,
-              failed: 0,
-              unfinished: 0,
-              durSum: 0,
-              durCnt: 0,
-              durHist: new Map
-            };
-            mcpServerMap.set(mcpServer, sAgg);
-          }
-          sAgg.tools.add(r.tool_name);
-          sAgg.calls += r.calls;
-          sAgg.succeeded += r.succeeded;
-          sAgg.failed += r.failed;
-          sAgg.unfinished += r.unfinished;
-          sAgg.durSum += r.dur_sum;
-          sAgg.durCnt += r.dur_cnt;
-          mergeSerializedHist(sAgg.durHist, r.dur_hist);
-          const msb = bMeta ? mcpSeriesMap.get(bMeta.key) : undefined;
-          if (msb) {
-            msb.totalCalls += r.calls;
-            msb.succeeded += r.succeeded;
-            msb.failed += r.failed;
-            msb.unfinished += r.unfinished;
-            msb.byServer[mcpServer] = (msb.byServer[mcpServer] ?? 0) + r.calls;
-          }
         }
       }
       for (const tsb of toolSeriesMap.values()) {
@@ -1712,6 +1916,8 @@ class DeepStatsStore {
           server: s.server,
           toolsCount: s.tools.size,
           calls: s.calls,
+          codemodeCalls: s.codemodeCalls,
+          directCalls: s.directCalls,
           succeeded: s.succeeded,
           failed: s.failed,
           unfinished: s.unfinished,
@@ -1722,8 +1928,26 @@ class DeepStatsStore {
           avgMs: s.durCnt > 0 ? s.durSum / s.durCnt : undefined
         };
       }).sort((a, b) => b.calls - a.calls);
+      const mcpTools = [...mcpToolMap.values()].map((t) => {
+        const finished = t.succeeded + t.failed;
+        return {
+          name: t.name,
+          server: t.server,
+          calls: t.calls,
+          codemodeCalls: t.codemodeCalls,
+          directCalls: t.directCalls,
+          succeeded: t.succeeded,
+          failed: t.failed,
+          unfinished: t.unfinished,
+          errorPct: finished > 0 ? t.failed / finished * 100 : 0,
+          p50Ms: quantileFromHist(t.durHist, 0.5),
+          p95Ms: quantileFromHist(t.durHist, 0.95),
+          avgMs: t.durCnt > 0 ? t.durSum / t.durCnt : undefined
+        };
+      }).sort((a, b) => b.calls - a.calls);
       const topMcpServers = mcpServers.slice(0, 5).map((s) => s.server);
       const mcpFinished = mcpSucceeded + mcpFailed;
+      const allActionDenom = toolCalls + mcpCodemodeCalls;
       const projects = [...projectAgg.values()].filter((p) => p.sessions > 0 || p.steps > 0 || p.tokens > 0).sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || b.sessions - a.sessions);
       const totalTokens = totalIn + totalOut + totalReas + totalCR + totalCW;
       const cacheDenom = totalIn + totalCR + totalCW;
@@ -1795,12 +2019,15 @@ class DeepStatsStore {
         },
         mcp: {
           totalCalls: mcpTotalCalls,
+          codemodeCalls: mcpCodemodeCalls,
+          directCalls: mcpDirectCalls,
           succeeded: mcpSucceeded,
           failed: mcpFailed,
           unfinished: mcpUnfinished,
           errorPct: mcpFinished > 0 ? mcpFailed / mcpFinished * 100 : 0,
-          shareOfAllToolsPct: toolCalls > 0 ? mcpTotalCalls / toolCalls * 100 : 0,
+          shareOfAllToolsPct: allActionDenom > 0 ? mcpTotalCalls / allActionDenom * 100 : 0,
           servers: mcpServers,
+          tools: mcpTools,
           topServers: topMcpServers,
           buckets: orderedBuckets.map((b) => mcpSeriesMap.get(b.key))
         },
@@ -5205,11 +5432,11 @@ function ToolsSection(props) {
           }), null);
           _$insert2(_el$105, _$createComponent2(StatTile, {
             get value() {
-              return compactNumber(mcpCalls());
+              return compactNumber(s().mcp.totalCalls);
             },
-            label: "mcp / plugin",
+            label: "mcp calls",
             get sublabel() {
-              return `${mcpTools().length} tools`;
+              return `${s().mcp.servers.length} srv \xB7 ${s().mcp.tools.length} tools`;
             },
             get color() {
               return props.theme().hue?.accent?.[200] ?? palette()[4];
@@ -5587,7 +5814,7 @@ function McpSection(props) {
   const s = () => props.stats;
   const mcp = () => s().mcp;
   const palette = createMemo2(() => getSeriesPalette(props.theme()));
-  const mcpTools = createMemo2(() => s().tools.filter((t) => t.isMcp));
+  const mcpTools = () => mcp().tools;
   const topServers = () => mcp().topServers;
   const buckets = () => mcp().buckets;
   const totalMcp = () => mcp().totalCalls;
@@ -5632,8 +5859,8 @@ function McpSection(props) {
               _$insertNode2(_el$147, _el$150);
               _$setProp2(_el$147, "flexDirection", "column");
               _$setProp2(_el$147, "gap", 1);
-              _$insertNode2(_el$148, _$createTextNode2(`No direct MCP tool calls recorded in this time window.`));
-              _$insertNode2(_el$150, _$createTextNode2(`Tip: Try [90D] / [YTD] / [ALL] for earlier direct MCP calls, or check [5] Tools for Code Mode \`execute\` calls.`));
+              _$insertNode2(_el$148, _$createTextNode2(`No MCP calls recorded in this time window.`));
+              _$insertNode2(_el$150, _$createTextNode2(`Tracks both direct MCP tool calls and Code Mode \`execute\` calls (\`state.metadata.toolCalls\`).`));
               _$effect2((_p$) => {
                 var _v$51 = props.theme().text.muted, _v$52 = props.theme().text.muted;
                 _v$51 !== _p$.e && (_p$.e = _$setProp2(_el$148, "fg", _v$51, _p$.e));
@@ -5743,7 +5970,7 @@ function McpSection(props) {
                 },
                 label: "mcp calls",
                 get sublabel() {
-                  return `${compactNumber(totalMcp() / Math.max(1, s().summary.activeDays))}/act`;
+                  return `${compactNumber(mcp().codemodeCalls)} cm \xB7 ${compactNumber(mcp().directCalls)} dir`;
                 },
                 get color() {
                   return props.theme().hue?.accent?.[200] ?? palette()[4];

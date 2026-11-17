@@ -228,13 +228,19 @@ function createMockStats(): DeepStatsPayload {
     },
     mcp: {
       totalCalls: 150,
+      codemodeCalls: 120,
+      directCalls: 30,
       succeeded: 147,
       failed: 3,
       unfinished: 0,
       errorPct: 2.0,
       shareOfAllToolsPct: 2.9,
       servers: [
-        { server: "jira", toolsCount: 1, calls: 150, succeeded: 147, failed: 3, unfinished: 0, errorPct: 2.0, sharePct: 100, p50Ms: 310, p95Ms: 890, avgMs: 350 },
+        { server: "jira", toolsCount: 1, calls: 150, codemodeCalls: 120, directCalls: 30, succeeded: 147, failed: 3, unfinished: 0, errorPct: 2.0, sharePct: 100, p50Ms: 310, p95Ms: 890, avgMs: 350 },
+      ],
+      tools: [
+        { name: "jira.getJiraIssue", server: "jira", calls: 120, codemodeCalls: 120, directCalls: 0, succeeded: 118, failed: 2, unfinished: 0, errorPct: 1.7 },
+        { name: "jira_get_issue", server: "jira", calls: 30, codemodeCalls: 0, directCalls: 30, succeeded: 29, failed: 1, unfinished: 0, errorPct: 3.3, p50Ms: 310, p95Ms: 890, avgMs: 350 },
       ],
       topServers: ["jira"],
       buckets: days.map((date, idx) => ({
