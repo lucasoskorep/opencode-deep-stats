@@ -415,6 +415,14 @@ describe("DeepStatsScreen TUI rendering", () => {
     }
   });
 
+  it("precompiled dist/tui.js contains Solid compiled helpers and valid plugin export", async () => {
+    const fs = await import("node:fs");
+    const built = fs.readFileSync(new URL("../dist/tui.js", import.meta.url), "utf8");
+    expect(built).toContain("createComponent");
+    expect(built).toContain("deep-stats");
+    expect(built).not.toContain("solid-js/dist/server.js");
+  });
+
   it("handles narrow terminal widths cleanly", async () => {
     const theme = createMockTheme();
     const mockStats = createMockStats();

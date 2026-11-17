@@ -5,6 +5,10 @@ bun = "latest"
 description = "Install plugin dependencies"
 run = "bun install"
 
+[tasks.build]
+description = "Build precompiled Solid TUI bundle (dist/tui.js)"
+run = "bun run build"
+
 [tasks.typecheck]
 description = "Run TypeScript type checking"
 run = "bun run typecheck"
@@ -14,5 +18,5 @@ description = "Run unit and OpenTUI rendering tests"
 run = "bun run test"
 
 [tasks.check]
-description = "Run typecheck and tests"
-depends = ["typecheck", "test"]
+description = "Build TUI bundle, typecheck, and run tests"
+depends = ["build", "typecheck", "test"]
