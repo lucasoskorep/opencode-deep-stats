@@ -1,0 +1,147 @@
+# opencode-deep-stats
+
+> **Disclaimer:** Created with [OpenCode](https://opencode.ai).
+
+A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`) that matches OpenCode's native `/stats` visual aesthetic while adding interactive views, time-series charts, model latency metrics, tool p50/p95 reliability, and GitHub PR & review velocity.
+
+## Features
+
+- **Matches OpenCode `/stats` aesthetic** — Native theme tokens, pixel logo, big block-digit hero, and 53-week `M–S` activity heatmap (switchable across Steps, Tokens, Cost, and GitHub PRs + Approvals).
+- **Token Usage Over Time** — Daily/weekly stacked composition bars (Cache Read, Input, Output, Reasoning, Cache Write), trend sparklines, cache hit rate %, blended $/1M tokens, and peak token/spend day callouts.
+- **Model Usage Over Time** — Stacked timeline showing how your model mix & spend shifted day-by-day/week-by-week (toggle Cost / Tokens / Steps), plus a full model leaderboard with **TTFT p50**, **output tok/s**, and `#variant` grouping toggle.
+- **GitHub PRs Opened & Approvals Per Day** — Powered by the `gh` CLI + GitHub GraphQL (including private & SAML-protected org repositories):
+  - Average opened PRs per calendar day & per weekday
+  - Average approvals per calendar day & per weekday
+  - Merge rate, median time-to-merge, approval rate, PR diff sizes
+  - Dual PRs Opened vs Approvals timeline chart
+  - Top repositories breakdown & AI efficiency ratios (`$/PR`, `tokens/PR`, `prompts/PR`, `sessions/PR`)
+- **Activity, Tools, Projects & Sessions** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, tool reliability with p50/p95 latencies, external/MCP tool metrics, top projects, and heaviest sessions.
+- **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v1.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
+- **Agent Tool Included** — Registers a `deep_stats` tool on the OpenCode server so you can also query your analytics directly in conversation.
+
+## Requirements
+
+- **OpenCode V2** (`opencode >= 2.0.0`)
+- Optional: [GitHub CLI (`gh`)](https://cli.github.com/) authenticated (`gh auth login`) for GitHub PR & review approval stats. If `gh` is unavailable, all local OpenCode stats still work normally.
+
+## Install
+
+### Option 1: Via OpenCode CLI (recommended)
+
+```sh
+opencode plugin add github:lucasoskorep/opencode-deep-stats
+```
+
+### Option 2: Global or Project `opencode.jsonc` (Server + RPC + TUI)
+
+Add the plugin to `~/.config/opencode/opencode.jsonc` (global) or `./opencode.jsonc` (project):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "github:lucasoskorep/opencode-deep-stats"
+  ]
+}
+```
+
+Or with options:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "github:lucasoskorep/opencode-deep-stats",
+      "options": {
+        "slashName": "deep-stats",
+        "aliases": ["dstats", "stats+"]
+      }
+    }
+  ]
+}
+```
+
+### Option 3: TUI-Only via `cli.json`
+
+To load only the TUI dashboard (for example, when connecting to a remote OpenCode server where the server plugin isn't installed), add it to `~/.config/opencode/cli.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": [
+    "github:lucasoskorep/opencode-deep-stats"
+  ]
+}
+```
+
+### Option 4: Local Clone
+
+```sh
+git clone https://github.com/lucasoskorep/opencode-deep-stats.git
+```
+
+Then reference the local directory path in `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "/path/to/opencode-deep-stats"
+  ]
+}
+```
+
+OpenCode hot-reloads config changes automatically (or run `/reload` / `opencode reload`).
+
+## Usage
+
+In the OpenCode TUI:
+
+- Run `/deep-stats` (aliases: `/dstats`, `/stats+`)
+- Or open the Command Palette (`Ctrl+P`) and select **Deep usage statistics**
+
+You can also pass arguments directly to jump to a range or tab:
+
+```text
+/deep-stats 7d
+/deep-stats 90d github
+/deep-stats models
+/deep-stats tokens
+/deep-stats full
+```
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `1`–`5`, `0` | Switch views (`Overview`, `Tokens`, `Models`, `GitHub`, `Activity`, `All`) |
+| `Tab` / `Shift+Tab` | Next / previous view |
+| `[` / `]` or `t` | Cycle time range (`7D`, `30D`, `90D`, `YTD`, `ALL`) |
+| `p` | Toggle scope (`all projects` ↔ `current project`, including detected GitHub repo) |
+| `h` | Cycle heatmap metric (`steps`, `tokens`, `cost`, `PRs + approvals`) |
+| `m` | Cycle model timeline metric (`cost`, `tokens`, `steps`) |
+| `v` | Toggle model variants (`grouped` vs `#variant`) |
+| `r` | Force refresh SQLite + GitHub data |
+| `j` / `k`, `↑` / `↓`, `PgUp` / `PgDn`, `g` / `G` | Scroll |
+| `Esc` / `q` | Close and return |
+
+## Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | Set `false` to disable the server or TUI plugin |
+| `slashName` | `string` | `"deep-stats"` | Custom slash command name (TUI) |
+| `aliases` | `string[]` | `["dstats", "stats+"]` | Slash command aliases (TUI) |
+
+## Development
+
+```sh
+bun install
+bun run typecheck
+bun test
+```
+
+## License
+
+[MIT](LICENSE)
