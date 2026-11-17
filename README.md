@@ -79,22 +79,6 @@ Add the plugin to `~/.config/opencode/opencode.jsonc` (global) or `./opencode.js
 }
 ```
 
-Or with options:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": [
-    {
-      "package": "github:lucasoskorep/opencode-deep-stats",
-      "options": {
-        "slashName": "deep-stats"
-      }
-    }
-  ]
-}
-```
-
 ### Option 3: TUI-Only via `cli.json`
 
 To load only the TUI dashboard (for example, when connecting to a remote OpenCode server where the server plugin isn't installed), add it to `~/.config/opencode/cli.json`:
@@ -168,8 +152,6 @@ You can also pass arguments directly to jump to a range or tab:
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | Set `false` to disable the server or TUI plugin |
-| `slashName` | `string` | `"deep-stats"` | Custom slash command name (TUI) |
-| `aliases` | `string[]` | `[]` | Optional extra slash command aliases (TUI) |
 
 ## Development
 

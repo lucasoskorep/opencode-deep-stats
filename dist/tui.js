@@ -7370,8 +7370,6 @@ var tui_default = Plugin.define({
     const [previousRoute, setPreviousRoute] = createSignal2({
       ...context.ui.router.current()
     });
-    const slashName = typeof context.options?.slashName === "string" && context.options.slashName.trim() ? context.options.slashName.trim() : "deep-stats";
-    const aliases = Array.isArray(context.options?.aliases) ? context.options.aliases.filter((a) => typeof a === "string") : [];
     let cachedProjectId;
     let cachedProjectName;
     let resolvedLocation = false;
@@ -7484,13 +7482,11 @@ var tui_default = Plugin.define({
           commands: [{
             id: "deep-stats.open",
             title: "Deep usage statistics",
-            description: "Open deep analytics for tokens/models over time, tool latency, and GitHub PRs & approvals",
+            description: "Open deep analytics for tokens/models over time, tool/MCP usage, and GitHub PRs & approvals",
             group: "System",
             palette: true,
-            suggested: true,
             slash: {
-              name: slashName,
-              aliases,
+              name: "deep-stats",
               arguments: true
             },
             run: (input) => {

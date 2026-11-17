@@ -46,13 +46,6 @@ export default Plugin.define({
     if (context.options?.enabled === false) return;
 
     const [previousRoute, setPreviousRoute] = createSignal({ ...context.ui.router.current() });
-    const slashName =
-      typeof context.options?.slashName === "string" && context.options.slashName.trim()
-        ? context.options.slashName.trim()
-        : "deep-stats";
-    const aliases = Array.isArray(context.options?.aliases)
-      ? (context.options.aliases as unknown[]).filter((a): a is string => typeof a === "string")
-      : [];
 
     let cachedProjectId: string | undefined;
     let cachedProjectName: string | undefined;
@@ -171,13 +164,11 @@ export default Plugin.define({
               id: "deep-stats.open",
               title: "Deep usage statistics",
               description:
-                "Open deep analytics for tokens/models over time, tool latency, and GitHub PRs & approvals",
+                "Open deep analytics for tokens/models over time, tool/MCP usage, and GitHub PRs & approvals",
               group: "System",
               palette: true,
-              suggested: true,
               slash: {
-                name: slashName,
-                aliases,
+                name: "deep-stats",
                 arguments: true,
               },
               run: (input?: string) => {
