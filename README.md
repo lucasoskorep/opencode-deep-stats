@@ -124,6 +124,8 @@ Then reference the local directory path in `~/.config/opencode/opencode.jsonc`:
 
 OpenCode hot-reloads config changes automatically (or run `/reload` / `opencode reload`).
 
+> **Note:** For GitHub package targets, use `"github:lucasoskorep/opencode-deep-stats"` (or append `#main`), not `@latest` — `@latest` is only valid for npm registry packages.
+
 ## Usage
 
 In the OpenCode TUI:

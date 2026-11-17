@@ -3,7 +3,7 @@ import { type ScrollBoxRenderable, TextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
 import type { Context } from "@opencode/plugin/tui/context";
 import type { ResolvedTheme } from "@opencode/theme/tui";
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js";
 import { formatDateRange, rangeLabel } from "../format.ts";
 import type {
   ChartMetric,
@@ -88,8 +88,10 @@ export function DeepStatsScreen(props: {
     try {
       const fast = await props.fetchStats({ ...inputBase, githubMode: "cache-only" });
       if (seq !== requestSeq) return;
-      setStats(fast);
-      setLoading(false);
+      batch(() => {
+        setStats(fast);
+        setLoading(false);
+      });
 
       if (forceRefresh || fast.github.status === "loading") {
         setSyncingGh(true);
@@ -103,26 +105,35 @@ export function DeepStatsScreen(props: {
       }
     } catch (err) {
       if (seq !== requestSeq) return;
-      setLoading(false);
-      setSyncingGh(false);
-      setError(err instanceof Error ? err.message : String(err));
+      batch(() => {
+        setLoading(false);
+        setSyncingGh(false);
+        setError(err instanceof Error ? err.message : String(err));
+      });
     }
   };
 
-  createEffect(() => {
-    // Re-run whenever reactive query params change
-    range();
-    projectOnly();
-    includeVariants();
-    void load(false);
-  });
+  createEffect(
+    on([range, projectOnly, includeVariants], () => {
+      void load(false);
+    }),
+  );
 
   onMount(() => {
     if (!props.subscribeUpdates) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const unsub = props.subscribeUpdates(() => {
-      void load(false);
+      if (stats()?.meta.historyStatus !== "partial") return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load(false);
+      }, 400);
     });
-    onCleanup(unsub);
+    onCleanup(() => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    });
   });
 
   const cycleRange = (dir: -1 | 1) => {

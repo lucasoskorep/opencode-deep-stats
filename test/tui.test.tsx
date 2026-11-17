@@ -368,6 +368,53 @@ describe("DeepStatsScreen TUI rendering", () => {
     });
   }
 
+  it("loads async stats once without re-triggering an infinite fetch loop", async () => {
+    const theme = createMockTheme();
+    const mockStats = createMockStats();
+    let calls = 0;
+    const mockContext = {
+      theme,
+      keymap: {
+        layer: () => {},
+        dispatch: () => {},
+        shortcuts: () => [],
+        commands: () => [],
+        pending: () => [],
+        active: () => [],
+        mode: { current: () => "base", push: () => () => {} },
+      },
+    };
+
+    const setup = await testRender(
+      () => (
+        <DeepStatsScreen
+          context={mockContext as any}
+          projectName="api"
+          hasProjectScope={true}
+          initialTab="overview"
+          fetchStats={async () => {
+            calls += 1;
+            await Bun.sleep(25);
+            return mockStats;
+          }}
+          onClose={() => {}}
+        />
+      ),
+      { width: 120, height: 52 },
+    );
+
+    try {
+      await Bun.sleep(120);
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(calls).toBe(1);
+      expect(frame).toContain("GITHUB VELOCITY");
+      expect(frame).not.toContain("Gathering deep usage stats");
+    } finally {
+      await setup.dispose();
+    }
+  });
+
   it("handles narrow terminal widths cleanly", async () => {
     const theme = createMockTheme();
     const mockStats = createMockStats();
