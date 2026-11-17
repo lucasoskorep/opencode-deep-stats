@@ -3,5 +3,6 @@ dist/
 *.tgz
 *.log
 .DS_Store
+.idea/
 .opencode/*
 !.opencode/opencode.jsonc
