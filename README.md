@@ -4,6 +4,8 @@
 
 A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`) that matches OpenCode's native `/stats` visual aesthetic while adding interactive views, time-series charts, model latency metrics, tool p50/p95 reliability, and GitHub PR & review velocity.
 
+![opencode-deep-stats Overview showing pixel logo, token hero, activity heatmap, cost summary, and GitHub velocity](assets/overview.png)
+
 ## Features
 
 - **Matches OpenCode `/stats` aesthetic** — Native theme tokens, pixel logo, big block-digit hero, and 53-week `M–S` activity heatmap (switchable across Steps, Tokens, Cost, and GitHub PRs + Approvals).
@@ -18,6 +20,20 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
 - **Activity, Tools, Projects & Sessions** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, tool reliability with p50/p95 latencies, external/MCP tool metrics, top projects, and heaviest sessions.
 - **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v1.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
 - **Agent Tool Included** — Registers a `deep_stats` tool on the OpenCode server so you can also query your analytics directly in conversation.
+
+## Screenshots
+
+### Token Usage Over Time (`[2] Tokens`)
+![Token composition, trend sparklines, and daily stacked token usage over time](assets/tokens.png)
+
+### Model Usage Over Time (`[3] Models`)
+![Model usage over time stacked bar chart and model leaderboard](assets/models.png)
+
+### GitHub PRs & Approvals Per Day (`[4] GitHub`)
+![GitHub PR velocity, average opened PRs/day, average approvals/day, and timeline](assets/github.png)
+
+### Activity Rhythm & Tool Latency (`[5] Activity`)
+![24-hour coding rhythm, day-of-week distribution, agents, and tool p50/p95 latency](assets/activity.png)
 
 ## Requirements
 
