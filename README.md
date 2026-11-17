@@ -22,7 +22,17 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
 ## Requirements
 
 - **OpenCode V2** (`opencode >= 2.0.0`)
-- Optional: [GitHub CLI (`gh`)](https://cli.github.com/) authenticated (`gh auth login`) for GitHub PR & review approval stats. If `gh` is unavailable, all local OpenCode stats still work normally.
+- **GitHub CLI (`gh`) — required for GitHub PR & approval stats**:
+  The plugin relies on a locally installed and authenticated [`gh`](https://cli.github.com/) CLI (`gh auth token`) to query GitHub's GraphQL API. Without `gh` installed and logged in, the GitHub PRs & approvals panels will show as unavailable (all local OpenCode token/model/tool stats still work normally).
+  - Install: `brew install gh` (macOS) or see [cli.github.com](https://cli.github.com/)
+  - Authenticate: `gh auth login` (for private/SAML organization repos, ensure your token has `repo` and `read:org` access and is SSO-authorized if your org uses SAML)
+  - Verify: `gh auth status`
+  - GitHub Enterprise Server: set `GH_HOST` if targeting an enterprise host instead of `github.com`
+
+## How Data Is Collected
+
+- **OpenCode analytics** — Read locally (read-only) from OpenCode's SQLite database (`opencode.db`) and incrementally rolled up into `~/.cache/opencode/deep-stats-rollup.v1.db`.
+- **GitHub PRs & approvals** — Runs `gh auth token` locally to authenticate with GitHub GraphQL, resolves the active user via `viewer.login`, and searches PRs authored by you (`is:pr author:<login>`) and PRs reviewed by you (`is:pr reviewed-by:<login>`) to count opened PRs, merges, and review approvals over time. Results are cached for 5 minutes in `~/.cache/opencode/deep-stats-github.v1.json`.
 
 ## Install
 
