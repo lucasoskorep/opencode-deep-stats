@@ -35,7 +35,6 @@
     "url": "https://github.com/lucasoskorep/opencode-deep-stats/issues"
   },
   "scripts": {
-    "build": "bun scripts/build.ts",
     "test": "bun test --conditions=browser --preload @opentui/solid/preload",
     "typecheck": "tsc --noEmit"
   },

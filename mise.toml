@@ -7,7 +7,7 @@ run = "bun install"
 
 [tasks.build]
 description = "Build precompiled Solid TUI bundle (dist/tui.js)"
-run = "bun run build"
+run = "bun scripts/build.ts"
 
 [tasks.typecheck]
 description = "Run TypeScript type checking"
