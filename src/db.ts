@@ -19,6 +19,8 @@ import type {
   DeepStatsPayload,
   DeepStatsQuery,
   HourlyBucket,
+  McpSeriesBucket,
+  McpServerRow,
   ModelSeriesBucket,
   ModelUsageRow,
   ProjectUsageRow,
@@ -35,6 +37,7 @@ const BUILTIN_TOOLS = new Set([
   "edit",
   "write",
   "patch",
+  "apply_patch",
   "glob",
   "grep",
   "shell",
@@ -44,6 +47,8 @@ const BUILTIN_TOOLS = new Set([
   "task",
   "question",
   "skill",
+  "get_skill",
+  "skill_mcp",
   "todo",
   "todowrite",
   "todoread",
@@ -54,8 +59,51 @@ const BUILTIN_TOOLS = new Set([
   "artifact",
   "schedule",
   "list",
+  "list_jobs",
+  "list_mcp_resources",
+  "read_mcp_resource",
   "lsp",
+  "lsp_diagnostics",
+  "lsp_hover",
+  "lsp_definition",
+  "lsp_references",
+  "lsp_goto_definition",
+  "lsp_find_references",
+  "lsp_rename",
+  "lsp_document_symbols",
+  "lsp_workspace_symbols",
+  "lsp_prepare_rename",
+  "lsp_code_actions",
+  "background_output",
+  "background_cancel",
+  "background_list",
+  "call_omo_agent",
+  "look_at",
+  "codesearch",
+  "batch",
+  "invalid",
+  "deep_stats",
 ]);
+
+function isMcpToolName(name: string): boolean {
+  if (BUILTIN_TOOLS.has(name)) return false;
+  if (!name || name.includes(" ")) return false;
+  return name.includes("_") || name.includes("-") || name.includes(".");
+}
+
+function extractMcpServer(name: string): string {
+  if (name.startsWith("mcp__")) {
+    const rest = name.slice(5);
+    const sep = rest.indexOf("__");
+    return sep > 0 ? rest.slice(0, sep) : rest || "mcp";
+  }
+  if (name.startsWith("grep_app_")) return "grep_app";
+  const idx = name.indexOf("_");
+  if (idx > 0) return name.slice(0, idx);
+  const dot = name.indexOf(".");
+  if (dot > 0) return name.slice(0, dot);
+  return "other";
+}
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -969,6 +1017,26 @@ export class DeepStatsStore {
           byTool: {},
         })),
       },
+      mcp: {
+        totalCalls: 0,
+        succeeded: 0,
+        failed: 0,
+        unfinished: 0,
+        errorPct: 0,
+        shareOfAllToolsPct: 0,
+        servers: [],
+        topServers: [],
+        buckets: orderedBuckets.map((b) => ({
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byServer: {},
+        })),
+      },
       agents: [],
       tools: [],
       hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, prompts: 0, steps: 0, tokens: 0, cost: 0 })),
@@ -1284,6 +1352,7 @@ export class DeepStatsStore {
       const tokenSeriesMap = new Map<string, TimeSeriesBucket>();
       const modelSeriesMap = new Map<string, ModelSeriesBucket>();
       const toolSeriesMap = new Map<string, ToolSeriesBucket>();
+      const mcpSeriesMap = new Map<string, McpSeriesBucket>();
       for (const b of orderedBuckets) {
         tokenSeriesMap.set(b.key, {
           ...b,
@@ -1315,6 +1384,16 @@ export class DeepStatsStore {
           unfinished: 0,
           errorPct: 0,
           byTool: {},
+        });
+        mcpSeriesMap.set(b.key, {
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byServer: {},
         });
       }
 
@@ -1535,10 +1614,22 @@ export class DeepStatsStore {
         tb.cacheHitPct = denom > 0 ? (tb.cacheRead / denom) * 100 : 0;
       }
 
-      // Tool aggregations
+      // Tool & MCP aggregations
       type ToolAgg = {
         name: string;
         isMcp: boolean;
+        mcpServer?: string;
+        calls: number;
+        succeeded: number;
+        failed: number;
+        unfinished: number;
+        durSum: number;
+        durCnt: number;
+        durHist: Map<number, number>;
+      };
+      type McpServerAgg = {
+        server: string;
+        tools: Set<string>;
         calls: number;
         succeeded: number;
         failed: number;
@@ -1548,10 +1639,15 @@ export class DeepStatsStore {
         durHist: Map<number, number>;
       };
       const toolAggMap = new Map<string, ToolAgg>();
+      const mcpServerMap = new Map<string, McpServerAgg>();
       let toolCalls = 0;
       let toolSucceeded = 0;
       let toolFailed = 0;
       let toolUnfinished = 0;
+      let mcpTotalCalls = 0;
+      let mcpSucceeded = 0;
+      let mcpFailed = 0;
+      let mcpUnfinished = 0;
 
       for (const r of toolRollups) {
         const ts = r.hour_id * 3_600_000 + 1_800_000;
@@ -1562,11 +1658,15 @@ export class DeepStatsStore {
         toolFailed += r.failed;
         toolUnfinished += r.unfinished;
 
+        const isMcp = isMcpToolName(r.tool_name);
+        const mcpServer = isMcp ? extractMcpServer(r.tool_name) : undefined;
+
         let tAgg = toolAggMap.get(r.tool_name);
         if (!tAgg) {
           tAgg = {
             name: r.tool_name,
-            isMcp: !BUILTIN_TOOLS.has(r.tool_name),
+            isMcp,
+            mcpServer,
             calls: 0,
             succeeded: 0,
             failed: 0,
@@ -1594,11 +1694,56 @@ export class DeepStatsStore {
           tsb.unfinished += r.unfinished;
           tsb.byTool[r.tool_name] = (tsb.byTool[r.tool_name] ?? 0) + r.calls;
         }
+
+        if (isMcp && mcpServer) {
+          mcpTotalCalls += r.calls;
+          mcpSucceeded += r.succeeded;
+          mcpFailed += r.failed;
+          mcpUnfinished += r.unfinished;
+
+          let sAgg = mcpServerMap.get(mcpServer);
+          if (!sAgg) {
+            sAgg = {
+              server: mcpServer,
+              tools: new Set(),
+              calls: 0,
+              succeeded: 0,
+              failed: 0,
+              unfinished: 0,
+              durSum: 0,
+              durCnt: 0,
+              durHist: new Map(),
+            };
+            mcpServerMap.set(mcpServer, sAgg);
+          }
+          sAgg.tools.add(r.tool_name);
+          sAgg.calls += r.calls;
+          sAgg.succeeded += r.succeeded;
+          sAgg.failed += r.failed;
+          sAgg.unfinished += r.unfinished;
+          sAgg.durSum += r.dur_sum;
+          sAgg.durCnt += r.dur_cnt;
+          mergeSerializedHist(sAgg.durHist, r.dur_hist);
+
+          const msb = bMeta ? mcpSeriesMap.get(bMeta.key) : undefined;
+          if (msb) {
+            msb.totalCalls += r.calls;
+            msb.succeeded += r.succeeded;
+            msb.failed += r.failed;
+            msb.unfinished += r.unfinished;
+            msb.byServer[mcpServer] = (msb.byServer[mcpServer] ?? 0) + r.calls;
+          }
+        }
       }
 
       for (const tsb of toolSeriesMap.values()) {
         const finished = tsb.succeeded + tsb.failed;
         tsb.errorPct = finished > 0 ? (tsb.failed / finished) * 100 : 0;
+      }
+
+      for (const msb of mcpSeriesMap.values()) {
+        const finished = msb.succeeded + msb.failed;
+        msb.errorPct = finished > 0 ? (msb.failed / finished) * 100 : 0;
       }
 
       // Streaks & active days from activityByDay
@@ -1678,6 +1823,7 @@ export class DeepStatsStore {
           return {
             name: t.name,
             isMcp: t.isMcp,
+            mcpServer: t.mcpServer,
             calls: t.calls,
             succeeded: t.succeeded,
             failed: t.failed,
@@ -1691,6 +1837,28 @@ export class DeepStatsStore {
         .sort((a, b) => b.calls - a.calls);
 
       const topTools = tools.slice(0, 5).map((t) => t.name);
+
+      const mcpServers: McpServerRow[] = [...mcpServerMap.values()]
+        .map((s) => {
+          const finished = s.succeeded + s.failed;
+          return {
+            server: s.server,
+            toolsCount: s.tools.size,
+            calls: s.calls,
+            succeeded: s.succeeded,
+            failed: s.failed,
+            unfinished: s.unfinished,
+            errorPct: finished > 0 ? (s.failed / finished) * 100 : 0,
+            sharePct: mcpTotalCalls > 0 ? (s.calls / mcpTotalCalls) * 100 : 0,
+            p50Ms: quantileFromHist(s.durHist, 0.5),
+            p95Ms: quantileFromHist(s.durHist, 0.95),
+            avgMs: s.durCnt > 0 ? s.durSum / s.durCnt : undefined,
+          };
+        })
+        .sort((a, b) => b.calls - a.calls);
+
+      const topMcpServers = mcpServers.slice(0, 5).map((s) => s.server);
+      const mcpFinished = mcpSucceeded + mcpFailed;
 
       const projects: ProjectUsageRow[] = [...projectAgg.values()]
         .filter((p) => p.sessions > 0 || p.steps > 0 || p.tokens > 0)
@@ -1766,6 +1934,17 @@ export class DeepStatsStore {
         toolSeries: {
           topTools,
           buckets: orderedBuckets.map((b) => toolSeriesMap.get(b.key)!),
+        },
+        mcp: {
+          totalCalls: mcpTotalCalls,
+          succeeded: mcpSucceeded,
+          failed: mcpFailed,
+          unfinished: mcpUnfinished,
+          errorPct: mcpFinished > 0 ? (mcpFailed / mcpFinished) * 100 : 0,
+          shareOfAllToolsPct: toolCalls > 0 ? (mcpTotalCalls / toolCalls) * 100 : 0,
+          servers: mcpServers,
+          topServers: topMcpServers,
+          buckets: orderedBuckets.map((b) => mcpSeriesMap.get(b.key)!),
         },
         agents,
         tools,

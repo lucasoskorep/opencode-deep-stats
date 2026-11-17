@@ -17,8 +17,9 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
   - Merge rate, median time-to-merge, approval rate, PR diff sizes
   - Dual PRs Opened vs Approvals timeline chart
   - Top repositories breakdown & AI efficiency ratios (`$/PR`, `tokens/PR`, `prompts/PR`, `sessions/PR`)
-- **Dedicated Tools View (`[5] Tools`)** — Tool mix stacked summary (`built-in` vs `mcp/plugin`, calls/day, calls/step, success rate), tool call & error sparklines, stacked **Tool Calls Over Time** timeline, full **Tool Reliability & Latency** table (`calls`, `err%`, `p50`, `p95`, `avg`), and external/MCP tools breakdown.
-- **Activity, Agents, Projects & Sessions (`[6] Activity`)** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, top projects, and heaviest sessions.
+- **Dedicated Tools View (`[5] Tools`)** — Tool mix stacked summary (`built-in` vs `mcp/plugin`, calls/day, calls/step, success rate), tool call & error sparklines, stacked **Tool Calls Over Time** timeline, and full **Tool Reliability & Latency** table (`calls`, `err%`, `p50`, `p95`, `avg`).
+- **Dedicated MCP View (`[6] MCP`)** — Groups external MCP calls by server (`buildkite`, `datadog`, `jira`, `chrome-devtools`, `excalidraw`, etc.) with stacked **MCP Server Mix**, trend sparklines, **MCP Calls Over Time** timeline, per-server reliability & latency (`p50`, `p95`, `avg`), and top individual MCP tools.
+- **Activity, Agents, Projects & Sessions (`[7] Activity`)** — 24-hour coding rhythm, day-of-week breakdown, agent breakdown, execution/subagent fan-out stats, top projects, and heaviest sessions.
 - **Fast Incremental Cache** — Indexes `opencode.db` into `~/.cache/opencode/deep-stats-rollup.v1.db` by UTC hour and caches GitHub GraphQL results (`~/.cache/opencode/deep-stats-github.v1.json`) so subsequent opens load in ~200ms even on multi-GB databases.
 - **Agent Tool Included** — Registers a `deep_stats` tool on the OpenCode server so you can also query your analytics directly in conversation.
 
@@ -36,7 +37,10 @@ A deep analytics & GitHub PR velocity plugin for **OpenCode V2** (`/deep-stats`)
 ### Tool Calls Over Time & Reliability (`[5] Tools`)
 ![Tool summary mix, sparklines, and daily stacked tool calls over time](assets/tools.png)
 
-### Activity Rhythm, Agents & Sessions (`[6] Activity`)
+### MCP Usage Over Time & Servers (`[6] MCP`)
+![MCP server mix, sparklines, and daily stacked MCP calls over time](assets/mcp.png)
+
+### Activity Rhythm, Agents & Sessions (`[7] Activity`)
 ![24-hour coding rhythm, day-of-week distribution, agents, projects, and heaviest sessions](assets/activity.png)
 
 ## Requirements
@@ -139,6 +143,7 @@ You can also pass arguments directly to jump to a range or tab:
 /deep-stats 7d
 /deep-stats 90d github
 /deep-stats tools
+/deep-stats mcp
 /deep-stats models
 /deep-stats tokens
 /deep-stats full
@@ -148,7 +153,7 @@ You can also pass arguments directly to jump to a range or tab:
 
 | Key | Action |
 | --- | --- |
-| `1`–`6`, `0` | Switch views (`Overview`, `Tokens`, `Models`, `GitHub`, `Tools`, `Activity`, `All`) |
+| `1`–`7`, `0` | Switch views (`Overview`, `Tokens`, `Models`, `GitHub`, `Tools`, `MCP`, `Activity`, `All`) |
 | `Tab` / `Shift+Tab` | Next / previous view |
 | `[` / `]` or `t` | Cycle time range (`7D`, `30D`, `90D`, `YTD`, `ALL`) |
 | `p` | Toggle scope (`all projects` ↔ `current project`, including detected GitHub repo) |

@@ -27,12 +27,10 @@ function parseSlashArgs(input?: string): { tab?: ViewTab; range?: StatsRangeKey 
   for (const tok of tokens) {
     if (tok === "7d" || tok === "30d" || tok === "90d" || tok === "ytd" || tok === "all") {
       range = tok;
-    } else if (tok === "overview" || tok === "tokens" || tok === "models" || tok === "github" || tok === "tools" || tok === "activity") {
+    } else if (tok === "overview" || tok === "tokens" || tok === "models" || tok === "github" || tok === "tools" || tok === "mcp" || tok === "activity") {
       tab = tok;
     } else if (tok === "pr" || tok === "prs") {
       tab = "github";
-    } else if (tok === "mcp") {
-      tab = "tools";
     } else if (tok === "hours") {
       tab = "activity";
     } else if (tok === "full") {

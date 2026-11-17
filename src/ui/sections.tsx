@@ -1297,17 +1297,308 @@ export function ToolsSection(props: {
           </For>
         </Show>
       </SectionPanel>
+    </box>
+  );
+}
 
-      {/* External / MCP Plugin Tools */}
-      <Show when={mcpTools().length > 0}>
+export function McpSection(props: {
+  stats: DeepStatsPayload;
+  width: number;
+  theme: () => ResolvedTheme;
+}) {
+  const s = () => props.stats;
+  const mcp = () => s().mcp;
+  const palette = createMemo(() => getSeriesPalette(props.theme()));
+  const mcpTools = createMemo(() => s().tools.filter((t) => t.isMcp));
+  const topServers = () => mcp().topServers;
+  const buckets = () => mcp().buckets;
+
+  const totalMcp = () => mcp().totalCalls;
+  const finishedMcp = () => mcp().succeeded + mcp().failed;
+  const successRate = () => (finishedMcp() > 0 ? (mcp().succeeded / finishedMcp()) * 100 : 100);
+  const maxBucketCalls = createMemo(() => Math.max(1, ...buckets().map((b) => b.totalCalls)));
+  const maxToolCalls = createMemo(() => Math.max(1, ...mcpTools().map((t) => t.calls)));
+  const barWidth = () => Math.max(10, Math.min(44, props.width - 44));
+  const otherColor = () => props.theme().text.muted;
+
+  const topServerItems = createMemo(() => {
+    const byName = new Map(mcp().servers.map((srv) => [srv.server, srv.calls]));
+    return topServers().map((name, idx) => ({
+      name,
+      calls: byName.get(name) ?? 0,
+      color: palette()[idx % palette().length]!,
+    }));
+  });
+  const topSum = createMemo(() => topServerItems().reduce((acc, item) => acc + item.calls, 0));
+  const otherCalls = createMemo(() => Math.max(0, totalMcp() - topSum()));
+
+  return (
+    <box flexDirection="column" width="100%" gap={2}>
+      <SectionPanel
+        title="MCP SUMMARY & SERVER MIX"
+        subtitle={`${mcp().servers.length} servers · ${mcpTools().length} tools · ${formatInt(totalMcp())} calls`}
+        theme={props.theme}
+      >
+        <Show
+          when={totalMcp() > 0}
+          fallback={
+            <box flexDirection="column" gap={1}>
+              <text fg={props.theme().text.muted}>
+                No direct MCP tool calls recorded in this time window.
+              </text>
+              <text fg={props.theme().text.muted}>
+                Tip: Try [90D] / [YTD] / [ALL] for earlier direct MCP calls, or check [5] Tools for Code Mode `execute` calls.
+              </text>
+            </box>
+          }
+        >
+          <StackedBar
+            total={Math.max(1, totalMcp())}
+            width={Math.max(16, props.width - 8)}
+            emptyColor={props.theme().background.raised.high}
+            segments={[
+              ...topServerItems().map((item) => ({ value: item.calls, color: item.color })),
+              { value: otherCalls(), color: otherColor() },
+            ]}
+          />
+          <box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={0} marginTop={1}>
+            <For each={topServerItems()}>
+              {(item) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={item.color}>■</text>
+                  <text fg={props.theme().text.base}>
+                    {item.name} {compactNumber(item.calls)} (
+                    {formatPct(totalMcp() > 0 ? (item.calls / totalMcp()) * 100 : 0)})
+                  </text>
+                </box>
+              )}
+            </For>
+            <Show when={otherCalls() > 0}>
+              <box flexDirection="row" gap={1}>
+                <text fg={otherColor()}>■</text>
+                <text fg={props.theme().text.muted}>
+                  other ({Math.max(0, mcp().servers.length - topServers().length)}) {compactNumber(otherCalls())}
+                </text>
+              </box>
+            </Show>
+          </box>
+
+          <box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={2} marginTop={1}>
+            <StatTile
+              value={compactNumber(totalMcp())}
+              label="mcp calls"
+              sublabel={`${compactNumber(totalMcp() / Math.max(1, s().summary.activeDays))}/act`}
+              color={props.theme().hue?.accent?.[200] ?? palette()[4]}
+              theme={props.theme}
+            />
+            <StatTile
+              value={formatRate(totalMcp() / Math.max(1, s().meta.daysCount), 1)}
+              label="mcp / day"
+              theme={props.theme}
+            />
+            <StatTile
+              value={formatPct(mcp().shareOfAllToolsPct)}
+              label="% of all tools"
+              theme={props.theme}
+            />
+            <StatTile
+              value={formatPct(successRate())}
+              label="success rate"
+              sublabel={`${formatInt(mcp().failed)} err · ${formatInt(mcp().unfinished)} unf`}
+              color={props.theme().text.feedback.success.base}
+              theme={props.theme}
+            />
+            <StatTile
+              value={formatInt(mcp().servers.length)}
+              label="mcp servers"
+              theme={props.theme}
+            />
+            <StatTile
+              value={formatInt(mcpTools().length)}
+              label="mcp tools"
+              theme={props.theme}
+            />
+          </box>
+        </Show>
+      </SectionPanel>
+
+      <Show when={totalMcp() > 0}>
+        {/* Sparklines */}
         <SectionPanel
-          title="EXTERNAL / MCP TOOLS"
-          subtitle={`${mcpTools().length} tools · ${formatInt(mcpCalls())} calls`}
+          title="MCP TREND SPARKLINES"
+          subtitle={`by ${s().meta.bucketGranularity}`}
           theme={props.theme}
         >
-          <For each={mcpTools().slice(0, 14)}>
+          <SparkStrip
+            label="mcp calls"
+            values={buckets().map((b) => b.totalCalls)}
+            summaryText={`${formatInt(totalMcp())} calls`}
+            color={palette()[1] ?? props.theme().text.base}
+            maxBars={Math.max(12, props.width - 36)}
+            theme={props.theme}
+          />
+          <SparkStrip
+            label="mcp errors"
+            values={buckets().map((b) => b.failed)}
+            summaryText={`${formatInt(mcp().failed)} errors`}
+            color={props.theme().text.feedback.error.base}
+            maxBars={Math.max(12, props.width - 36)}
+            theme={props.theme}
+          />
+        </SectionPanel>
+
+        {/* MCP Calls Over Time Stacked Timeline */}
+        <SectionPanel
+          title="MCP CALLS OVER TIME"
+          subtitle={`per ${s().meta.bucketGranularity} · ${buckets().length} buckets`}
+          theme={props.theme}
+        >
+          <box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={0} marginBottom={1}>
+            <For each={topServers()}>
+              {(srv, idx) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={palette()[idx() % palette().length]}>■</text>
+                  <text fg={props.theme().text.base}>{srv}</text>
+                </box>
+              )}
+            </For>
+            <Show when={mcp().servers.length > topServers().length}>
+              <box flexDirection="row" gap={1}>
+                <text fg={otherColor()}>■</text>
+                <text fg={props.theme().text.muted}>
+                  other ({mcp().servers.length - topServers().length})
+                </text>
+              </box>
+            </Show>
+          </box>
+
+          <TableRowLine
+            theme={props.theme}
+            cells={[
+              { text: s().meta.bucketGranularity === "week" ? "week" : "date", width: 6, color: props.theme().text.muted },
+              { text: "servers", width: barWidth(), color: props.theme().text.muted },
+              { text: "calls", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "err%", width: 6, align: "right", color: props.theme().text.muted },
+              ...(props.width >= 72
+                ? [{ text: "top server", width: 16, color: props.theme().text.muted }]
+                : []),
+            ]}
+          />
+
+          <For each={[...buckets()].reverse().slice(0, 40)}>
+            {(b) => {
+              const topEntries = () =>
+                topServers().map((srv, idx) => ({
+                  value: b.byServer[srv] ?? 0,
+                  color: palette()[idx % palette().length]!,
+                }));
+              const sumTop = () => topEntries().reduce((acc, e) => acc + e.value, 0);
+              const otherVal = () => Math.max(0, b.totalCalls - sumTop());
+
+              const dominant = createMemo(() => {
+                let bestName = "-";
+                let bestVal = 0;
+                for (const [k, v] of Object.entries(b.byServer)) {
+                  if (v > bestVal) {
+                    bestVal = v;
+                    bestName = k;
+                  }
+                }
+                return {
+                  name: bestName,
+                  pct: b.totalCalls > 0 ? (bestVal / b.totalCalls) * 100 : 0,
+                };
+              });
+
+              const emptyCol = () => mixColor(props.theme().background.raised.base, props.theme().text.muted, 0.2);
+
+              return (
+                <box flexDirection="row" width="100%" height={1} gap={1}>
+                  <text fg={props.theme().text.muted}>{b.label.padEnd(6)}</text>
+                  <StackedBar
+                    total={maxBucketCalls()}
+                    width={barWidth()}
+                    emptyColor={emptyCol()}
+                    segments={[...topEntries(), { value: otherVal(), color: otherColor() }]}
+                  />
+                  <text fg={props.theme().text.base} attributes={TextAttributes.BOLD}>
+                    {compactNumber(b.totalCalls).padStart(7)}
+                  </text>
+                  <text
+                    fg={
+                      b.errorPct >= 5
+                        ? props.theme().text.feedback.error.base
+                        : props.theme().text.muted
+                    }
+                  >
+                    {formatPct(b.errorPct).padStart(6)}
+                  </text>
+                  <Show when={props.width >= 72}>
+                    <text fg={props.theme().text.muted}>
+                      {dominant().pct > 0 ? `${truncate(dominant().name, 11)} ${Math.round(dominant().pct)}%` : "-"}
+                    </text>
+                  </Show>
+                </box>
+              );
+            }}
+          </For>
+        </SectionPanel>
+
+        {/* MCP Servers Breakdown */}
+        <SectionPanel
+          title="MCP SERVERS"
+          subtitle={`${mcp().servers.length} servers`}
+          theme={props.theme}
+        >
+          <TableRowLine
+            theme={props.theme}
+            cells={[
+              { text: "server", width: Math.max(14, props.width - 68), color: props.theme().text.muted },
+              { text: "tools", width: 5, align: "right", color: props.theme().text.muted },
+              { text: "share", width: 6, align: "right", color: props.theme().text.muted },
+              { text: "calls", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "err%", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "p50", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "p95", width: 7, align: "right", color: props.theme().text.muted },
+              { text: "avg", width: 7, align: "right", color: props.theme().text.muted },
+            ]}
+          />
+          <For each={mcp().servers}>
+            {(srv, idx) => {
+              const nameW = () => Math.max(14, props.width - 68);
+              return (
+                <TableRowLine
+                  theme={props.theme}
+                  cells={[
+                    { text: srv.server, width: nameW(), color: palette()[idx() % palette().length], bold: true },
+                    { text: formatInt(srv.toolsCount), width: 5, align: "right", color: props.theme().text.muted },
+                    { text: formatPct(srv.sharePct), width: 6, align: "right", color: props.theme().text.muted },
+                    { text: compactNumber(srv.calls), width: 7, align: "right", bold: true },
+                    {
+                      text: formatPct(srv.errorPct),
+                      width: 7,
+                      align: "right",
+                      color: srv.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted,
+                    },
+                    { text: formatDurationMs(srv.p50Ms), width: 7, align: "right", color: props.theme().text.muted },
+                    { text: formatDurationMs(srv.p95Ms), width: 7, align: "right", color: props.theme().text.muted },
+                    { text: formatDurationMs(srv.avgMs), width: 7, align: "right", color: props.theme().text.muted },
+                  ]}
+                />
+              );
+            }}
+          </For>
+        </SectionPanel>
+
+        {/* Top Individual MCP Tools */}
+        <SectionPanel
+          title="TOP MCP TOOLS"
+          subtitle={`${mcpTools().length} tools · ${formatInt(totalMcp())} calls`}
+          theme={props.theme}
+        >
+          <For each={mcpTools().slice(0, 20)}>
             {(tool) => {
-              const nameW = () => Math.max(18, props.width - 52);
+              const nameW = () => Math.max(18, props.width - 54);
               return (
                 <box flexDirection="row" width="100%" height={1} gap={1}>
                   <text fg={props.theme().hue?.accent?.[200] ?? props.theme().text.base}>

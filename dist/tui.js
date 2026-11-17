@@ -368,6 +368,7 @@ var BUILTIN_TOOLS = new Set([
   "edit",
   "write",
   "patch",
+  "apply_patch",
   "glob",
   "grep",
   "shell",
@@ -377,6 +378,8 @@ var BUILTIN_TOOLS = new Set([
   "task",
   "question",
   "skill",
+  "get_skill",
+  "skill_mcp",
   "todo",
   "todowrite",
   "todoread",
@@ -387,8 +390,54 @@ var BUILTIN_TOOLS = new Set([
   "artifact",
   "schedule",
   "list",
-  "lsp"
+  "list_jobs",
+  "list_mcp_resources",
+  "read_mcp_resource",
+  "lsp",
+  "lsp_diagnostics",
+  "lsp_hover",
+  "lsp_definition",
+  "lsp_references",
+  "lsp_goto_definition",
+  "lsp_find_references",
+  "lsp_rename",
+  "lsp_document_symbols",
+  "lsp_workspace_symbols",
+  "lsp_prepare_rename",
+  "lsp_code_actions",
+  "background_output",
+  "background_cancel",
+  "background_list",
+  "call_omo_agent",
+  "look_at",
+  "codesearch",
+  "batch",
+  "invalid",
+  "deep_stats"
 ]);
+function isMcpToolName(name) {
+  if (BUILTIN_TOOLS.has(name))
+    return false;
+  if (!name || name.includes(" "))
+    return false;
+  return name.includes("_") || name.includes("-") || name.includes(".");
+}
+function extractMcpServer(name) {
+  if (name.startsWith("mcp__")) {
+    const rest = name.slice(5);
+    const sep = rest.indexOf("__");
+    return sep > 0 ? rest.slice(0, sep) : rest || "mcp";
+  }
+  if (name.startsWith("grep_app_"))
+    return "grep_app";
+  const idx = name.indexOf("_");
+  if (idx > 0)
+    return name.slice(0, idx);
+  const dot = name.indexOf(".");
+  if (dot > 0)
+    return name.slice(0, dot);
+  return "other";
+}
 var WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 var HIST_SCALE = 6;
 var HIST_MAX_BUCKET = 126;
@@ -1062,6 +1111,26 @@ class DeepStatsStore {
           byTool: {}
         }))
       },
+      mcp: {
+        totalCalls: 0,
+        succeeded: 0,
+        failed: 0,
+        unfinished: 0,
+        errorPct: 0,
+        shareOfAllToolsPct: 0,
+        servers: [],
+        topServers: [],
+        buckets: orderedBuckets.map((b) => ({
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byServer: {}
+        }))
+      },
       agents: [],
       tools: [],
       hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, prompts: 0, steps: 0, tokens: 0, cost: 0 })),
@@ -1245,6 +1314,7 @@ class DeepStatsStore {
       const tokenSeriesMap = new Map;
       const modelSeriesMap = new Map;
       const toolSeriesMap = new Map;
+      const mcpSeriesMap = new Map;
       for (const b of orderedBuckets) {
         tokenSeriesMap.set(b.key, {
           ...b,
@@ -1276,6 +1346,16 @@ class DeepStatsStore {
           unfinished: 0,
           errorPct: 0,
           byTool: {}
+        });
+        mcpSeriesMap.set(b.key, {
+          key: b.key,
+          label: b.label,
+          totalCalls: 0,
+          succeeded: 0,
+          failed: 0,
+          unfinished: 0,
+          errorPct: 0,
+          byServer: {}
         });
       }
       const hourly = Array.from({ length: 24 }, (_, hour) => ({
@@ -1451,10 +1531,15 @@ class DeepStatsStore {
         tb.cacheHitPct = denom > 0 ? tb.cacheRead / denom * 100 : 0;
       }
       const toolAggMap = new Map;
+      const mcpServerMap = new Map;
       let toolCalls = 0;
       let toolSucceeded = 0;
       let toolFailed = 0;
       let toolUnfinished = 0;
+      let mcpTotalCalls = 0;
+      let mcpSucceeded = 0;
+      let mcpFailed = 0;
+      let mcpUnfinished = 0;
       for (const r of toolRollups) {
         const ts = r.hour_id * 3600000 + 1800000;
         const day = formatDayInTz(ts, dayFmt);
@@ -1464,11 +1549,14 @@ class DeepStatsStore {
         toolSucceeded += r.succeeded;
         toolFailed += r.failed;
         toolUnfinished += r.unfinished;
+        const isMcp = isMcpToolName(r.tool_name);
+        const mcpServer = isMcp ? extractMcpServer(r.tool_name) : undefined;
         let tAgg = toolAggMap.get(r.tool_name);
         if (!tAgg) {
           tAgg = {
             name: r.tool_name,
-            isMcp: !BUILTIN_TOOLS.has(r.tool_name),
+            isMcp,
+            mcpServer,
             calls: 0,
             succeeded: 0,
             failed: 0,
@@ -1495,10 +1583,51 @@ class DeepStatsStore {
           tsb.unfinished += r.unfinished;
           tsb.byTool[r.tool_name] = (tsb.byTool[r.tool_name] ?? 0) + r.calls;
         }
+        if (isMcp && mcpServer) {
+          mcpTotalCalls += r.calls;
+          mcpSucceeded += r.succeeded;
+          mcpFailed += r.failed;
+          mcpUnfinished += r.unfinished;
+          let sAgg = mcpServerMap.get(mcpServer);
+          if (!sAgg) {
+            sAgg = {
+              server: mcpServer,
+              tools: new Set,
+              calls: 0,
+              succeeded: 0,
+              failed: 0,
+              unfinished: 0,
+              durSum: 0,
+              durCnt: 0,
+              durHist: new Map
+            };
+            mcpServerMap.set(mcpServer, sAgg);
+          }
+          sAgg.tools.add(r.tool_name);
+          sAgg.calls += r.calls;
+          sAgg.succeeded += r.succeeded;
+          sAgg.failed += r.failed;
+          sAgg.unfinished += r.unfinished;
+          sAgg.durSum += r.dur_sum;
+          sAgg.durCnt += r.dur_cnt;
+          mergeSerializedHist(sAgg.durHist, r.dur_hist);
+          const msb = bMeta ? mcpSeriesMap.get(bMeta.key) : undefined;
+          if (msb) {
+            msb.totalCalls += r.calls;
+            msb.succeeded += r.succeeded;
+            msb.failed += r.failed;
+            msb.unfinished += r.unfinished;
+            msb.byServer[mcpServer] = (msb.byServer[mcpServer] ?? 0) + r.calls;
+          }
+        }
       }
       for (const tsb of toolSeriesMap.values()) {
         const finished = tsb.succeeded + tsb.failed;
         tsb.errorPct = finished > 0 ? tsb.failed / finished * 100 : 0;
+      }
+      for (const msb of mcpSeriesMap.values()) {
+        const finished = msb.succeeded + msb.failed;
+        msb.errorPct = finished > 0 ? msb.failed / finished * 100 : 0;
       }
       const activity = allDays.map((d) => activityByDay.get(d));
       let activeDays = 0;
@@ -1565,6 +1694,7 @@ class DeepStatsStore {
         return {
           name: t.name,
           isMcp: t.isMcp,
+          mcpServer: t.mcpServer,
           calls: t.calls,
           succeeded: t.succeeded,
           failed: t.failed,
@@ -1576,6 +1706,24 @@ class DeepStatsStore {
         };
       }).sort((a, b) => b.calls - a.calls);
       const topTools = tools.slice(0, 5).map((t) => t.name);
+      const mcpServers = [...mcpServerMap.values()].map((s) => {
+        const finished = s.succeeded + s.failed;
+        return {
+          server: s.server,
+          toolsCount: s.tools.size,
+          calls: s.calls,
+          succeeded: s.succeeded,
+          failed: s.failed,
+          unfinished: s.unfinished,
+          errorPct: finished > 0 ? s.failed / finished * 100 : 0,
+          sharePct: mcpTotalCalls > 0 ? s.calls / mcpTotalCalls * 100 : 0,
+          p50Ms: quantileFromHist(s.durHist, 0.5),
+          p95Ms: quantileFromHist(s.durHist, 0.95),
+          avgMs: s.durCnt > 0 ? s.durSum / s.durCnt : undefined
+        };
+      }).sort((a, b) => b.calls - a.calls);
+      const topMcpServers = mcpServers.slice(0, 5).map((s) => s.server);
+      const mcpFinished = mcpSucceeded + mcpFailed;
       const projects = [...projectAgg.values()].filter((p) => p.sessions > 0 || p.steps > 0 || p.tokens > 0).sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || b.sessions - a.sessions);
       const totalTokens = totalIn + totalOut + totalReas + totalCR + totalCW;
       const cacheDenom = totalIn + totalCR + totalCW;
@@ -1644,6 +1792,17 @@ class DeepStatsStore {
         toolSeries: {
           topTools,
           buckets: orderedBuckets.map((b) => toolSeriesMap.get(b.key))
+        },
+        mcp: {
+          totalCalls: mcpTotalCalls,
+          succeeded: mcpSucceeded,
+          failed: mcpFailed,
+          unfinished: mcpUnfinished,
+          errorPct: mcpFinished > 0 ? mcpFailed / mcpFinished * 100 : 0,
+          shareOfAllToolsPct: toolCalls > 0 ? mcpTotalCalls / toolCalls * 100 : 0,
+          servers: mcpServers,
+          topServers: topMcpServers,
+          buckets: orderedBuckets.map((b) => mcpSeriesMap.get(b.key))
         },
         agents,
         tools,
@@ -5421,15 +5580,584 @@ function ToolsSection(props) {
         });
       }
     }), null);
-    _$insert2(_el$97, _$createComponent2(Show2, {
-      get when() {
-        return mcpTools().length > 0;
+    return _el$97;
+  })();
+}
+function McpSection(props) {
+  const s = () => props.stats;
+  const mcp = () => s().mcp;
+  const palette = createMemo2(() => getSeriesPalette(props.theme()));
+  const mcpTools = createMemo2(() => s().tools.filter((t) => t.isMcp));
+  const topServers = () => mcp().topServers;
+  const buckets = () => mcp().buckets;
+  const totalMcp = () => mcp().totalCalls;
+  const finishedMcp = () => mcp().succeeded + mcp().failed;
+  const successRate = () => finishedMcp() > 0 ? mcp().succeeded / finishedMcp() * 100 : 100;
+  const maxBucketCalls = createMemo2(() => Math.max(1, ...buckets().map((b) => b.totalCalls)));
+  const maxToolCalls = createMemo2(() => Math.max(1, ...mcpTools().map((t) => t.calls)));
+  const barWidth = () => Math.max(10, Math.min(44, props.width - 44));
+  const otherColor = () => props.theme().text.muted;
+  const topServerItems = createMemo2(() => {
+    const byName = new Map(mcp().servers.map((srv) => [srv.server, srv.calls]));
+    return topServers().map((name, idx) => ({
+      name,
+      calls: byName.get(name) ?? 0,
+      color: palette()[idx % palette().length]
+    }));
+  });
+  const topSum = createMemo2(() => topServerItems().reduce((acc, item) => acc + item.calls, 0));
+  const otherCalls = createMemo2(() => Math.max(0, totalMcp() - topSum()));
+  return (() => {
+    var _el$131 = _$createElement2("box");
+    _$setProp2(_el$131, "flexDirection", "column");
+    _$setProp2(_el$131, "width", "100%");
+    _$setProp2(_el$131, "gap", 2);
+    _$insert2(_el$131, _$createComponent2(SectionPanel, {
+      title: "MCP SUMMARY & SERVER MIX",
+      get subtitle() {
+        return `${mcp().servers.length} servers \xB7 ${mcpTools().length} tools \xB7 ${formatInt(totalMcp())} calls`;
+      },
+      get theme() {
+        return props.theme;
       },
       get children() {
-        return _$createComponent2(SectionPanel, {
-          title: "EXTERNAL / MCP TOOLS",
+        return _$createComponent2(Show2, {
+          get when() {
+            return totalMcp() > 0;
+          },
+          get fallback() {
+            return (() => {
+              var _el$147 = _$createElement2("box"), _el$148 = _$createElement2("text"), _el$150 = _$createElement2("text");
+              _$insertNode2(_el$147, _el$148);
+              _$insertNode2(_el$147, _el$150);
+              _$setProp2(_el$147, "flexDirection", "column");
+              _$setProp2(_el$147, "gap", 1);
+              _$insertNode2(_el$148, _$createTextNode2(`No direct MCP tool calls recorded in this time window.`));
+              _$insertNode2(_el$150, _$createTextNode2(`Tip: Try [90D] / [YTD] / [ALL] for earlier direct MCP calls, or check [5] Tools for Code Mode \`execute\` calls.`));
+              _$effect2((_p$) => {
+                var _v$51 = props.theme().text.muted, _v$52 = props.theme().text.muted;
+                _v$51 !== _p$.e && (_p$.e = _$setProp2(_el$148, "fg", _v$51, _p$.e));
+                _v$52 !== _p$.t && (_p$.t = _$setProp2(_el$150, "fg", _v$52, _p$.t));
+                return _p$;
+              }, {
+                e: undefined,
+                t: undefined
+              });
+              return _el$147;
+            })();
+          },
+          get children() {
+            return [_$createComponent2(StackedBar, {
+              get total() {
+                return Math.max(1, totalMcp());
+              },
+              get width() {
+                return Math.max(16, props.width - 8);
+              },
+              get emptyColor() {
+                return props.theme().background.raised.high;
+              },
+              get segments() {
+                return [...topServerItems().map((item) => ({
+                  value: item.calls,
+                  color: item.color
+                })), {
+                  value: otherCalls(),
+                  color: otherColor()
+                }];
+              }
+            }), (() => {
+              var _el$132 = _$createElement2("box");
+              _$setProp2(_el$132, "flexDirection", "row");
+              _$setProp2(_el$132, "flexWrap", "wrap");
+              _$setProp2(_el$132, "columnGap", 2);
+              _$setProp2(_el$132, "rowGap", 0);
+              _$setProp2(_el$132, "marginTop", 1);
+              _$insert2(_el$132, _$createComponent2(For2, {
+                get each() {
+                  return topServerItems();
+                },
+                children: (item) => (() => {
+                  var _el$152 = _$createElement2("box"), _el$153 = _$createElement2("text"), _el$155 = _$createElement2("text"), _el$156 = _$createTextNode2(` `), _el$157 = _$createTextNode2(` (`), _el$158 = _$createTextNode2(`)`);
+                  _$insertNode2(_el$152, _el$153);
+                  _$insertNode2(_el$152, _el$155);
+                  _$setProp2(_el$152, "flexDirection", "row");
+                  _$setProp2(_el$152, "gap", 1);
+                  _$insertNode2(_el$153, _$createTextNode2(`\u25A0`));
+                  _$insertNode2(_el$155, _el$156);
+                  _$insertNode2(_el$155, _el$157);
+                  _$insertNode2(_el$155, _el$158);
+                  _$insert2(_el$155, () => item.name, _el$156);
+                  _$insert2(_el$155, () => compactNumber(item.calls), _el$157);
+                  _$insert2(_el$155, () => formatPct(totalMcp() > 0 ? item.calls / totalMcp() * 100 : 0), _el$158);
+                  _$effect2((_p$) => {
+                    var _v$53 = item.color, _v$54 = props.theme().text.base;
+                    _v$53 !== _p$.e && (_p$.e = _$setProp2(_el$153, "fg", _v$53, _p$.e));
+                    _v$54 !== _p$.t && (_p$.t = _$setProp2(_el$155, "fg", _v$54, _p$.t));
+                    return _p$;
+                  }, {
+                    e: undefined,
+                    t: undefined
+                  });
+                  return _el$152;
+                })()
+              }), null);
+              _$insert2(_el$132, _$createComponent2(Show2, {
+                get when() {
+                  return otherCalls() > 0;
+                },
+                get children() {
+                  var _el$133 = _$createElement2("box"), _el$134 = _$createElement2("text"), _el$136 = _$createElement2("text"), _el$137 = _$createTextNode2(`other (`), _el$138 = _$createTextNode2(`) `);
+                  _$insertNode2(_el$133, _el$134);
+                  _$insertNode2(_el$133, _el$136);
+                  _$setProp2(_el$133, "flexDirection", "row");
+                  _$setProp2(_el$133, "gap", 1);
+                  _$insertNode2(_el$134, _$createTextNode2(`\u25A0`));
+                  _$insertNode2(_el$136, _el$137);
+                  _$insertNode2(_el$136, _el$138);
+                  _$insert2(_el$136, () => Math.max(0, mcp().servers.length - topServers().length), _el$138);
+                  _$insert2(_el$136, () => compactNumber(otherCalls()), null);
+                  _$effect2((_p$) => {
+                    var _v$47 = otherColor(), _v$48 = props.theme().text.muted;
+                    _v$47 !== _p$.e && (_p$.e = _$setProp2(_el$134, "fg", _v$47, _p$.e));
+                    _v$48 !== _p$.t && (_p$.t = _$setProp2(_el$136, "fg", _v$48, _p$.t));
+                    return _p$;
+                  }, {
+                    e: undefined,
+                    t: undefined
+                  });
+                  return _el$133;
+                }
+              }), null);
+              return _el$132;
+            })(), (() => {
+              var _el$139 = _$createElement2("box");
+              _$setProp2(_el$139, "flexDirection", "row");
+              _$setProp2(_el$139, "flexWrap", "wrap");
+              _$setProp2(_el$139, "justifyContent", "space-between");
+              _$setProp2(_el$139, "gap", 2);
+              _$setProp2(_el$139, "marginTop", 1);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return compactNumber(totalMcp());
+                },
+                label: "mcp calls",
+                get sublabel() {
+                  return `${compactNumber(totalMcp() / Math.max(1, s().summary.activeDays))}/act`;
+                },
+                get color() {
+                  return props.theme().hue?.accent?.[200] ?? palette()[4];
+                },
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return formatRate(totalMcp() / Math.max(1, s().meta.daysCount), 1);
+                },
+                label: "mcp / day",
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return formatPct(mcp().shareOfAllToolsPct);
+                },
+                label: "% of all tools",
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return formatPct(successRate());
+                },
+                label: "success rate",
+                get sublabel() {
+                  return `${formatInt(mcp().failed)} err \xB7 ${formatInt(mcp().unfinished)} unf`;
+                },
+                get color() {
+                  return props.theme().text.feedback.success.base;
+                },
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return formatInt(mcp().servers.length);
+                },
+                label: "mcp servers",
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              _$insert2(_el$139, _$createComponent2(StatTile, {
+                get value() {
+                  return formatInt(mcpTools().length);
+                },
+                label: "mcp tools",
+                get theme() {
+                  return props.theme;
+                }
+              }), null);
+              return _el$139;
+            })()];
+          }
+        });
+      }
+    }), null);
+    _$insert2(_el$131, _$createComponent2(Show2, {
+      get when() {
+        return totalMcp() > 0;
+      },
+      get children() {
+        return [_$createComponent2(SectionPanel, {
+          title: "MCP TREND SPARKLINES",
           get subtitle() {
-            return `${mcpTools().length} tools \xB7 ${formatInt(mcpCalls())} calls`;
+            return `by ${s().meta.bucketGranularity}`;
+          },
+          get theme() {
+            return props.theme;
+          },
+          get children() {
+            return [_$createComponent2(SparkStrip, {
+              label: "mcp calls",
+              get values() {
+                return buckets().map((b) => b.totalCalls);
+              },
+              get summaryText() {
+                return `${formatInt(totalMcp())} calls`;
+              },
+              get color() {
+                return palette()[1] ?? props.theme().text.base;
+              },
+              get maxBars() {
+                return Math.max(12, props.width - 36);
+              },
+              get theme() {
+                return props.theme;
+              }
+            }), _$createComponent2(SparkStrip, {
+              label: "mcp errors",
+              get values() {
+                return buckets().map((b) => b.failed);
+              },
+              get summaryText() {
+                return `${formatInt(mcp().failed)} errors`;
+              },
+              get color() {
+                return props.theme().text.feedback.error.base;
+              },
+              get maxBars() {
+                return Math.max(12, props.width - 36);
+              },
+              get theme() {
+                return props.theme;
+              }
+            })];
+          }
+        }), _$createComponent2(SectionPanel, {
+          title: "MCP CALLS OVER TIME",
+          get subtitle() {
+            return `per ${s().meta.bucketGranularity} \xB7 ${buckets().length} buckets`;
+          },
+          get theme() {
+            return props.theme;
+          },
+          get children() {
+            return [(() => {
+              var _el$140 = _$createElement2("box");
+              _$setProp2(_el$140, "flexDirection", "row");
+              _$setProp2(_el$140, "flexWrap", "wrap");
+              _$setProp2(_el$140, "columnGap", 2);
+              _$setProp2(_el$140, "rowGap", 0);
+              _$setProp2(_el$140, "marginBottom", 1);
+              _$insert2(_el$140, _$createComponent2(For2, {
+                get each() {
+                  return topServers();
+                },
+                children: (srv, idx) => (() => {
+                  var _el$159 = _$createElement2("box"), _el$160 = _$createElement2("text"), _el$162 = _$createElement2("text");
+                  _$insertNode2(_el$159, _el$160);
+                  _$insertNode2(_el$159, _el$162);
+                  _$setProp2(_el$159, "flexDirection", "row");
+                  _$setProp2(_el$159, "gap", 1);
+                  _$insertNode2(_el$160, _$createTextNode2(`\u25A0`));
+                  _$insert2(_el$162, srv);
+                  _$effect2((_p$) => {
+                    var _v$55 = palette()[idx() % palette().length], _v$56 = props.theme().text.base;
+                    _v$55 !== _p$.e && (_p$.e = _$setProp2(_el$160, "fg", _v$55, _p$.e));
+                    _v$56 !== _p$.t && (_p$.t = _$setProp2(_el$162, "fg", _v$56, _p$.t));
+                    return _p$;
+                  }, {
+                    e: undefined,
+                    t: undefined
+                  });
+                  return _el$159;
+                })()
+              }), null);
+              _$insert2(_el$140, _$createComponent2(Show2, {
+                get when() {
+                  return mcp().servers.length > topServers().length;
+                },
+                get children() {
+                  var _el$141 = _$createElement2("box"), _el$142 = _$createElement2("text"), _el$144 = _$createElement2("text"), _el$145 = _$createTextNode2(`other (`), _el$146 = _$createTextNode2(`)`);
+                  _$insertNode2(_el$141, _el$142);
+                  _$insertNode2(_el$141, _el$144);
+                  _$setProp2(_el$141, "flexDirection", "row");
+                  _$setProp2(_el$141, "gap", 1);
+                  _$insertNode2(_el$142, _$createTextNode2(`\u25A0`));
+                  _$insertNode2(_el$144, _el$145);
+                  _$insertNode2(_el$144, _el$146);
+                  _$insert2(_el$144, () => mcp().servers.length - topServers().length, _el$146);
+                  _$effect2((_p$) => {
+                    var _v$49 = otherColor(), _v$50 = props.theme().text.muted;
+                    _v$49 !== _p$.e && (_p$.e = _$setProp2(_el$142, "fg", _v$49, _p$.e));
+                    _v$50 !== _p$.t && (_p$.t = _$setProp2(_el$144, "fg", _v$50, _p$.t));
+                    return _p$;
+                  }, {
+                    e: undefined,
+                    t: undefined
+                  });
+                  return _el$141;
+                }
+              }), null);
+              return _el$140;
+            })(), _$createComponent2(TableRowLine, {
+              get theme() {
+                return props.theme;
+              },
+              get cells() {
+                return [{
+                  text: s().meta.bucketGranularity === "week" ? "week" : "date",
+                  width: 6,
+                  color: props.theme().text.muted
+                }, {
+                  text: "servers",
+                  width: barWidth(),
+                  color: props.theme().text.muted
+                }, {
+                  text: "calls",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "err%",
+                  width: 6,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, ...props.width >= 72 ? [{
+                  text: "top server",
+                  width: 16,
+                  color: props.theme().text.muted
+                }] : []];
+              }
+            }), _$createComponent2(For2, {
+              get each() {
+                return [...buckets()].reverse().slice(0, 40);
+              },
+              children: (b) => {
+                const topEntries = () => topServers().map((srv, idx) => ({
+                  value: b.byServer[srv] ?? 0,
+                  color: palette()[idx % palette().length]
+                }));
+                const sumTop = () => topEntries().reduce((acc, e) => acc + e.value, 0);
+                const otherVal = () => Math.max(0, b.totalCalls - sumTop());
+                const dominant = createMemo2(() => {
+                  let bestName = "-";
+                  let bestVal = 0;
+                  for (const [k, v] of Object.entries(b.byServer)) {
+                    if (v > bestVal) {
+                      bestVal = v;
+                      bestName = k;
+                    }
+                  }
+                  return {
+                    name: bestName,
+                    pct: b.totalCalls > 0 ? bestVal / b.totalCalls * 100 : 0
+                  };
+                });
+                const emptyCol = () => mixColor(props.theme().background.raised.base, props.theme().text.muted, 0.2);
+                return (() => {
+                  var _el$163 = _$createElement2("box"), _el$164 = _$createElement2("text"), _el$165 = _$createElement2("text"), _el$166 = _$createElement2("text");
+                  _$insertNode2(_el$163, _el$164);
+                  _$insertNode2(_el$163, _el$165);
+                  _$insertNode2(_el$163, _el$166);
+                  _$setProp2(_el$163, "flexDirection", "row");
+                  _$setProp2(_el$163, "width", "100%");
+                  _$setProp2(_el$163, "height", 1);
+                  _$setProp2(_el$163, "gap", 1);
+                  _$insert2(_el$164, () => b.label.padEnd(6));
+                  _$insert2(_el$163, _$createComponent2(StackedBar, {
+                    get total() {
+                      return maxBucketCalls();
+                    },
+                    get width() {
+                      return barWidth();
+                    },
+                    get emptyColor() {
+                      return emptyCol();
+                    },
+                    get segments() {
+                      return [...topEntries(), {
+                        value: otherVal(),
+                        color: otherColor()
+                      }];
+                    }
+                  }), _el$165);
+                  _$insert2(_el$165, () => compactNumber(b.totalCalls).padStart(7));
+                  _$insert2(_el$166, () => formatPct(b.errorPct).padStart(6));
+                  _$insert2(_el$163, _$createComponent2(Show2, {
+                    get when() {
+                      return props.width >= 72;
+                    },
+                    get children() {
+                      var _el$167 = _$createElement2("text");
+                      _$insert2(_el$167, (() => {
+                        var _c$7 = _$memo2(() => dominant().pct > 0);
+                        return () => _c$7() ? `${truncate(dominant().name, 11)} ${Math.round(dominant().pct)}%` : "-";
+                      })());
+                      _$effect2((_$p) => _$setProp2(_el$167, "fg", props.theme().text.muted, _$p));
+                      return _el$167;
+                    }
+                  }), null);
+                  _$effect2((_p$) => {
+                    var _v$57 = props.theme().text.muted, _v$58 = props.theme().text.base, _v$59 = TextAttributes2.BOLD, _v$60 = b.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted;
+                    _v$57 !== _p$.e && (_p$.e = _$setProp2(_el$164, "fg", _v$57, _p$.e));
+                    _v$58 !== _p$.t && (_p$.t = _$setProp2(_el$165, "fg", _v$58, _p$.t));
+                    _v$59 !== _p$.a && (_p$.a = _$setProp2(_el$165, "attributes", _v$59, _p$.a));
+                    _v$60 !== _p$.o && (_p$.o = _$setProp2(_el$166, "fg", _v$60, _p$.o));
+                    return _p$;
+                  }, {
+                    e: undefined,
+                    t: undefined,
+                    a: undefined,
+                    o: undefined
+                  });
+                  return _el$163;
+                })();
+              }
+            })];
+          }
+        }), _$createComponent2(SectionPanel, {
+          title: "MCP SERVERS",
+          get subtitle() {
+            return `${mcp().servers.length} servers`;
+          },
+          get theme() {
+            return props.theme;
+          },
+          get children() {
+            return [_$createComponent2(TableRowLine, {
+              get theme() {
+                return props.theme;
+              },
+              get cells() {
+                return [{
+                  text: "server",
+                  width: Math.max(14, props.width - 68),
+                  color: props.theme().text.muted
+                }, {
+                  text: "tools",
+                  width: 5,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "share",
+                  width: 6,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "calls",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "err%",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "p50",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "p95",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }, {
+                  text: "avg",
+                  width: 7,
+                  align: "right",
+                  color: props.theme().text.muted
+                }];
+              }
+            }), _$createComponent2(For2, {
+              get each() {
+                return mcp().servers;
+              },
+              children: (srv, idx) => {
+                const nameW = () => Math.max(14, props.width - 68);
+                return _$createComponent2(TableRowLine, {
+                  get theme() {
+                    return props.theme;
+                  },
+                  get cells() {
+                    return [{
+                      text: srv.server,
+                      width: nameW(),
+                      color: palette()[idx() % palette().length],
+                      bold: true
+                    }, {
+                      text: formatInt(srv.toolsCount),
+                      width: 5,
+                      align: "right",
+                      color: props.theme().text.muted
+                    }, {
+                      text: formatPct(srv.sharePct),
+                      width: 6,
+                      align: "right",
+                      color: props.theme().text.muted
+                    }, {
+                      text: compactNumber(srv.calls),
+                      width: 7,
+                      align: "right",
+                      bold: true
+                    }, {
+                      text: formatPct(srv.errorPct),
+                      width: 7,
+                      align: "right",
+                      color: srv.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted
+                    }, {
+                      text: formatDurationMs(srv.p50Ms),
+                      width: 7,
+                      align: "right",
+                      color: props.theme().text.muted
+                    }, {
+                      text: formatDurationMs(srv.p95Ms),
+                      width: 7,
+                      align: "right",
+                      color: props.theme().text.muted
+                    }, {
+                      text: formatDurationMs(srv.avgMs),
+                      width: 7,
+                      align: "right",
+                      color: props.theme().text.muted
+                    }];
+                  }
+                });
+              }
+            })];
+          }
+        }), _$createComponent2(SectionPanel, {
+          title: "TOP MCP TOOLS",
+          get subtitle() {
+            return `${mcpTools().length} tools \xB7 ${formatInt(totalMcp())} calls`;
           },
           get theme() {
             return props.theme;
@@ -5437,36 +6165,36 @@ function ToolsSection(props) {
           get children() {
             return _$createComponent2(For2, {
               get each() {
-                return mcpTools().slice(0, 14);
+                return mcpTools().slice(0, 20);
               },
               children: (tool) => {
-                const nameW = () => Math.max(18, props.width - 52);
+                const nameW = () => Math.max(18, props.width - 54);
                 return (() => {
-                  var _el$131 = _$createElement2("box"), _el$132 = _$createElement2("text"), _el$133 = _$createElement2("text"), _el$134 = _$createElement2("text"), _el$135 = _$createElement2("text"), _el$136 = _$createElement2("text"), _el$137 = _$createElement2("text");
-                  _$insertNode2(_el$131, _el$132);
-                  _$insertNode2(_el$131, _el$133);
-                  _$insertNode2(_el$131, _el$134);
-                  _$insertNode2(_el$131, _el$135);
-                  _$insertNode2(_el$131, _el$136);
-                  _$insertNode2(_el$131, _el$137);
-                  _$setProp2(_el$131, "flexDirection", "row");
-                  _$setProp2(_el$131, "width", "100%");
-                  _$setProp2(_el$131, "height", 1);
-                  _$setProp2(_el$131, "gap", 1);
-                  _$insert2(_el$132, () => truncate(tool.name, nameW()).padEnd(nameW()));
-                  _$insert2(_el$133, () => barBlocks(tool.calls / maxToolCalls(), 12));
-                  _$insert2(_el$134, () => compactNumber(tool.calls).padStart(7));
-                  _$insert2(_el$135, () => formatPct(tool.errorPct).padStart(6));
-                  _$insert2(_el$136, () => formatDurationMs(tool.p50Ms).padStart(7));
-                  _$insert2(_el$137, () => formatDurationMs(tool.p95Ms).padStart(7));
+                  var _el$168 = _$createElement2("box"), _el$169 = _$createElement2("text"), _el$170 = _$createElement2("text"), _el$171 = _$createElement2("text"), _el$172 = _$createElement2("text"), _el$173 = _$createElement2("text"), _el$174 = _$createElement2("text");
+                  _$insertNode2(_el$168, _el$169);
+                  _$insertNode2(_el$168, _el$170);
+                  _$insertNode2(_el$168, _el$171);
+                  _$insertNode2(_el$168, _el$172);
+                  _$insertNode2(_el$168, _el$173);
+                  _$insertNode2(_el$168, _el$174);
+                  _$setProp2(_el$168, "flexDirection", "row");
+                  _$setProp2(_el$168, "width", "100%");
+                  _$setProp2(_el$168, "height", 1);
+                  _$setProp2(_el$168, "gap", 1);
+                  _$insert2(_el$169, () => truncate(tool.name, nameW()).padEnd(nameW()));
+                  _$insert2(_el$170, () => barBlocks(tool.calls / maxToolCalls(), 12));
+                  _$insert2(_el$171, () => compactNumber(tool.calls).padStart(7));
+                  _$insert2(_el$172, () => formatPct(tool.errorPct).padStart(6));
+                  _$insert2(_el$173, () => formatDurationMs(tool.p50Ms).padStart(7));
+                  _$insert2(_el$174, () => formatDurationMs(tool.p95Ms).padStart(7));
                   _$effect2((_p$) => {
-                    var _v$47 = props.theme().hue?.accent?.[200] ?? props.theme().text.base, _v$48 = palette()[1], _v$49 = props.theme().text.base, _v$50 = tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted, _v$51 = props.theme().text.muted, _v$52 = props.theme().text.muted;
-                    _v$47 !== _p$.e && (_p$.e = _$setProp2(_el$132, "fg", _v$47, _p$.e));
-                    _v$48 !== _p$.t && (_p$.t = _$setProp2(_el$133, "fg", _v$48, _p$.t));
-                    _v$49 !== _p$.a && (_p$.a = _$setProp2(_el$134, "fg", _v$49, _p$.a));
-                    _v$50 !== _p$.o && (_p$.o = _$setProp2(_el$135, "fg", _v$50, _p$.o));
-                    _v$51 !== _p$.i && (_p$.i = _$setProp2(_el$136, "fg", _v$51, _p$.i));
-                    _v$52 !== _p$.n && (_p$.n = _$setProp2(_el$137, "fg", _v$52, _p$.n));
+                    var _v$61 = props.theme().hue?.accent?.[200] ?? props.theme().text.base, _v$62 = palette()[1], _v$63 = props.theme().text.base, _v$64 = tool.errorPct >= 5 ? props.theme().text.feedback.error.base : props.theme().text.muted, _v$65 = props.theme().text.muted, _v$66 = props.theme().text.muted;
+                    _v$61 !== _p$.e && (_p$.e = _$setProp2(_el$169, "fg", _v$61, _p$.e));
+                    _v$62 !== _p$.t && (_p$.t = _$setProp2(_el$170, "fg", _v$62, _p$.t));
+                    _v$63 !== _p$.a && (_p$.a = _$setProp2(_el$171, "fg", _v$63, _p$.a));
+                    _v$64 !== _p$.o && (_p$.o = _$setProp2(_el$172, "fg", _v$64, _p$.o));
+                    _v$65 !== _p$.i && (_p$.i = _$setProp2(_el$173, "fg", _v$65, _p$.i));
+                    _v$66 !== _p$.n && (_p$.n = _$setProp2(_el$174, "fg", _v$66, _p$.n));
                     return _p$;
                   }, {
                     e: undefined,
@@ -5476,15 +6204,15 @@ function ToolsSection(props) {
                     i: undefined,
                     n: undefined
                   });
-                  return _el$131;
+                  return _el$168;
                 })();
               }
             });
           }
-        });
+        })];
       }
     }), null);
-    return _el$97;
+    return _el$131;
   })();
 }
 function ActivitySection(props) {
@@ -5501,16 +6229,16 @@ function ActivitySection(props) {
     return best;
   });
   return (() => {
-    var _el$138 = _$createElement2("box"), _el$139 = _$createElement2("box"), _el$140 = _$createElement2("box"), _el$141 = _$createElement2("box");
-    _$insertNode2(_el$138, _el$139);
-    _$insertNode2(_el$138, _el$140);
-    _$insertNode2(_el$138, _el$141);
-    _$setProp2(_el$138, "flexDirection", "column");
-    _$setProp2(_el$138, "width", "100%");
-    _$setProp2(_el$138, "gap", 2);
-    _$setProp2(_el$139, "width", "100%");
-    _$setProp2(_el$139, "gap", 2);
-    _$insert2(_el$139, _$createComponent2(SectionPanel, {
+    var _el$175 = _$createElement2("box"), _el$176 = _$createElement2("box"), _el$177 = _$createElement2("box"), _el$178 = _$createElement2("box");
+    _$insertNode2(_el$175, _el$176);
+    _$insertNode2(_el$175, _el$177);
+    _$insertNode2(_el$175, _el$178);
+    _$setProp2(_el$175, "flexDirection", "column");
+    _$setProp2(_el$175, "width", "100%");
+    _$setProp2(_el$175, "gap", 2);
+    _$setProp2(_el$176, "width", "100%");
+    _$setProp2(_el$176, "gap", 2);
+    _$insert2(_el$176, _$createComponent2(SectionPanel, {
       title: "24-HOUR RHYTHM",
       get subtitle() {
         return _$memo2(() => !!peakHour())() ? `peak ${String(peakHour().hour).padStart(2, "0")}:00` : undefined;
@@ -5534,38 +6262,38 @@ function ActivitySection(props) {
             const pm = () => s().hourly[i + 12];
             const bw = () => Math.max(4, Math.min(10, Math.floor((props.width - 54) / 4)));
             return (() => {
-              var _el$142 = _$createElement2("box"), _el$143 = _$createElement2("box"), _el$144 = _$createElement2("text"), _el$145 = _$createElement2("text"), _el$146 = _$createElement2("text"), _el$147 = _$createElement2("box"), _el$148 = _$createElement2("text"), _el$149 = _$createElement2("text"), _el$150 = _$createElement2("text");
-              _$insertNode2(_el$142, _el$143);
-              _$insertNode2(_el$142, _el$147);
-              _$setProp2(_el$142, "flexDirection", "row");
-              _$setProp2(_el$142, "justifyContent", "space-between");
-              _$setProp2(_el$142, "width", "100%");
-              _$setProp2(_el$142, "height", 1);
-              _$setProp2(_el$142, "gap", 1);
-              _$insertNode2(_el$143, _el$144);
-              _$insertNode2(_el$143, _el$145);
-              _$insertNode2(_el$143, _el$146);
-              _$setProp2(_el$143, "flexDirection", "row");
-              _$setProp2(_el$143, "gap", 1);
-              _$insert2(_el$144, () => String(am().hour).padStart(2, "0"));
-              _$insert2(_el$145, () => barBlocks(am().steps / maxHourSteps(), bw()));
-              _$insert2(_el$146, () => compactNumber(am().steps).padStart(5));
-              _$insertNode2(_el$147, _el$148);
-              _$insertNode2(_el$147, _el$149);
-              _$insertNode2(_el$147, _el$150);
-              _$setProp2(_el$147, "flexDirection", "row");
-              _$setProp2(_el$147, "gap", 1);
-              _$insert2(_el$148, () => String(pm().hour).padStart(2, "0"));
-              _$insert2(_el$149, () => barBlocks(pm().steps / maxHourSteps(), bw()));
-              _$insert2(_el$150, () => compactNumber(pm().steps).padStart(5));
+              var _el$179 = _$createElement2("box"), _el$180 = _$createElement2("box"), _el$181 = _$createElement2("text"), _el$182 = _$createElement2("text"), _el$183 = _$createElement2("text"), _el$184 = _$createElement2("box"), _el$185 = _$createElement2("text"), _el$186 = _$createElement2("text"), _el$187 = _$createElement2("text");
+              _$insertNode2(_el$179, _el$180);
+              _$insertNode2(_el$179, _el$184);
+              _$setProp2(_el$179, "flexDirection", "row");
+              _$setProp2(_el$179, "justifyContent", "space-between");
+              _$setProp2(_el$179, "width", "100%");
+              _$setProp2(_el$179, "height", 1);
+              _$setProp2(_el$179, "gap", 1);
+              _$insertNode2(_el$180, _el$181);
+              _$insertNode2(_el$180, _el$182);
+              _$insertNode2(_el$180, _el$183);
+              _$setProp2(_el$180, "flexDirection", "row");
+              _$setProp2(_el$180, "gap", 1);
+              _$insert2(_el$181, () => String(am().hour).padStart(2, "0"));
+              _$insert2(_el$182, () => barBlocks(am().steps / maxHourSteps(), bw()));
+              _$insert2(_el$183, () => compactNumber(am().steps).padStart(5));
+              _$insertNode2(_el$184, _el$185);
+              _$insertNode2(_el$184, _el$186);
+              _$insertNode2(_el$184, _el$187);
+              _$setProp2(_el$184, "flexDirection", "row");
+              _$setProp2(_el$184, "gap", 1);
+              _$insert2(_el$185, () => String(pm().hour).padStart(2, "0"));
+              _$insert2(_el$186, () => barBlocks(pm().steps / maxHourSteps(), bw()));
+              _$insert2(_el$187, () => compactNumber(pm().steps).padStart(5));
               _$effect2((_p$) => {
-                var _v$56 = props.theme().text.muted, _v$57 = palette()[0], _v$58 = props.theme().text.base, _v$59 = props.theme().text.muted, _v$60 = palette()[1], _v$61 = props.theme().text.base;
-                _v$56 !== _p$.e && (_p$.e = _$setProp2(_el$144, "fg", _v$56, _p$.e));
-                _v$57 !== _p$.t && (_p$.t = _$setProp2(_el$145, "fg", _v$57, _p$.t));
-                _v$58 !== _p$.a && (_p$.a = _$setProp2(_el$146, "fg", _v$58, _p$.a));
-                _v$59 !== _p$.o && (_p$.o = _$setProp2(_el$148, "fg", _v$59, _p$.o));
-                _v$60 !== _p$.i && (_p$.i = _$setProp2(_el$149, "fg", _v$60, _p$.i));
-                _v$61 !== _p$.n && (_p$.n = _$setProp2(_el$150, "fg", _v$61, _p$.n));
+                var _v$70 = props.theme().text.muted, _v$71 = palette()[0], _v$72 = props.theme().text.base, _v$73 = props.theme().text.muted, _v$74 = palette()[1], _v$75 = props.theme().text.base;
+                _v$70 !== _p$.e && (_p$.e = _$setProp2(_el$181, "fg", _v$70, _p$.e));
+                _v$71 !== _p$.t && (_p$.t = _$setProp2(_el$182, "fg", _v$71, _p$.t));
+                _v$72 !== _p$.a && (_p$.a = _$setProp2(_el$183, "fg", _v$72, _p$.a));
+                _v$73 !== _p$.o && (_p$.o = _$setProp2(_el$185, "fg", _v$73, _p$.o));
+                _v$74 !== _p$.i && (_p$.i = _$setProp2(_el$186, "fg", _v$74, _p$.i));
+                _v$75 !== _p$.n && (_p$.n = _$setProp2(_el$187, "fg", _v$75, _p$.n));
                 return _p$;
               }, {
                 e: undefined,
@@ -5575,13 +6303,13 @@ function ActivitySection(props) {
                 i: undefined,
                 n: undefined
               });
-              return _el$142;
+              return _el$179;
             })();
           }
         });
       }
     }), null);
-    _$insert2(_el$139, _$createComponent2(SectionPanel, {
+    _$insert2(_el$176, _$createComponent2(SectionPanel, {
       title: "DAY OF WEEK",
       subtitle: "steps \xB7 cost \xB7 PRs/appr",
       get theme() {
@@ -5599,62 +6327,62 @@ function ActivitySection(props) {
           children: (wd) => {
             const bw = () => Math.max(6, Math.min(14, (wide() ? Math.floor(props.width * 0.4) : props.width) - 34));
             return (() => {
-              var _el$151 = _$createElement2("box"), _el$152 = _$createElement2("box"), _el$153 = _$createElement2("text"), _el$154 = _$createElement2("text"), _el$155 = _$createElement2("box"), _el$156 = _$createElement2("text");
-              _$insertNode2(_el$151, _el$152);
-              _$insertNode2(_el$151, _el$155);
-              _$setProp2(_el$151, "flexDirection", "row");
-              _$setProp2(_el$151, "justifyContent", "space-between");
-              _$setProp2(_el$151, "width", "100%");
-              _$setProp2(_el$151, "height", 1);
-              _$setProp2(_el$151, "gap", 1);
-              _$insertNode2(_el$152, _el$153);
-              _$insertNode2(_el$152, _el$154);
-              _$setProp2(_el$152, "flexDirection", "row");
-              _$setProp2(_el$152, "gap", 1);
-              _$insert2(_el$153, () => wd.label);
-              _$insert2(_el$154, () => barBlocks(wd.steps / maxWeekdaySteps(), bw()));
-              _$insertNode2(_el$155, _el$156);
-              _$setProp2(_el$155, "flexDirection", "row");
-              _$setProp2(_el$155, "gap", 1);
-              _$insert2(_el$156, () => formatUsd(wd.cost).padStart(7));
-              _$insert2(_el$155, _$createComponent2(Show2, {
+              var _el$188 = _$createElement2("box"), _el$189 = _$createElement2("box"), _el$190 = _$createElement2("text"), _el$191 = _$createElement2("text"), _el$192 = _$createElement2("box"), _el$193 = _$createElement2("text");
+              _$insertNode2(_el$188, _el$189);
+              _$insertNode2(_el$188, _el$192);
+              _$setProp2(_el$188, "flexDirection", "row");
+              _$setProp2(_el$188, "justifyContent", "space-between");
+              _$setProp2(_el$188, "width", "100%");
+              _$setProp2(_el$188, "height", 1);
+              _$setProp2(_el$188, "gap", 1);
+              _$insertNode2(_el$189, _el$190);
+              _$insertNode2(_el$189, _el$191);
+              _$setProp2(_el$189, "flexDirection", "row");
+              _$setProp2(_el$189, "gap", 1);
+              _$insert2(_el$190, () => wd.label);
+              _$insert2(_el$191, () => barBlocks(wd.steps / maxWeekdaySteps(), bw()));
+              _$insertNode2(_el$192, _el$193);
+              _$setProp2(_el$192, "flexDirection", "row");
+              _$setProp2(_el$192, "gap", 1);
+              _$insert2(_el$193, () => formatUsd(wd.cost).padStart(7));
+              _$insert2(_el$192, _$createComponent2(Show2, {
                 get when() {
                   return s().github.status === "ok";
                 },
                 get children() {
                   return [(() => {
-                    var _el$157 = _$createElement2("text");
-                    _$insert2(_el$157, () => `${wd.prsOpened}p`.padStart(4));
-                    _$effect2((_$p) => _$setProp2(_el$157, "fg", props.theme().text.feedback.info.base, _$p));
-                    return _el$157;
+                    var _el$194 = _$createElement2("text");
+                    _$insert2(_el$194, () => `${wd.prsOpened}p`.padStart(4));
+                    _$effect2((_$p) => _$setProp2(_el$194, "fg", props.theme().text.feedback.info.base, _$p));
+                    return _el$194;
                   })(), (() => {
-                    var _el$158 = _$createElement2("text");
-                    _$insert2(_el$158, () => `${wd.approvals}a`.padStart(4));
-                    _$effect2((_$p) => _$setProp2(_el$158, "fg", props.theme().text.feedback.success.base, _$p));
-                    return _el$158;
+                    var _el$195 = _$createElement2("text");
+                    _$insert2(_el$195, () => `${wd.approvals}a`.padStart(4));
+                    _$effect2((_$p) => _$setProp2(_el$195, "fg", props.theme().text.feedback.success.base, _$p));
+                    return _el$195;
                   })()];
                 }
               }), null);
               _$effect2((_p$) => {
-                var _v$62 = props.theme().text.muted, _v$63 = palette()[0], _v$64 = props.theme().text.base;
-                _v$62 !== _p$.e && (_p$.e = _$setProp2(_el$153, "fg", _v$62, _p$.e));
-                _v$63 !== _p$.t && (_p$.t = _$setProp2(_el$154, "fg", _v$63, _p$.t));
-                _v$64 !== _p$.a && (_p$.a = _$setProp2(_el$156, "fg", _v$64, _p$.a));
+                var _v$76 = props.theme().text.muted, _v$77 = palette()[0], _v$78 = props.theme().text.base;
+                _v$76 !== _p$.e && (_p$.e = _$setProp2(_el$190, "fg", _v$76, _p$.e));
+                _v$77 !== _p$.t && (_p$.t = _$setProp2(_el$191, "fg", _v$77, _p$.t));
+                _v$78 !== _p$.a && (_p$.a = _$setProp2(_el$193, "fg", _v$78, _p$.a));
                 return _p$;
               }, {
                 e: undefined,
                 t: undefined,
                 a: undefined
               });
-              return _el$151;
+              return _el$188;
             })();
           }
         });
       }
     }), null);
-    _$setProp2(_el$140, "width", "100%");
-    _$setProp2(_el$140, "gap", 2);
-    _$insert2(_el$140, _$createComponent2(SectionPanel, {
+    _$setProp2(_el$177, "width", "100%");
+    _$setProp2(_el$177, "gap", 2);
+    _$insert2(_el$177, _$createComponent2(SectionPanel, {
       title: "AGENTS",
       get subtitle() {
         return `${s().agents.length} agents`;
@@ -5708,7 +6436,7 @@ function ActivitySection(props) {
         });
       }
     }), null);
-    _$insert2(_el$140, _$createComponent2(SectionPanel, {
+    _$insert2(_el$177, _$createComponent2(SectionPanel, {
       title: "EXECUTION & SUBAGENTS",
       get theme() {
         return props.theme;
@@ -5767,9 +6495,9 @@ function ActivitySection(props) {
         })];
       }
     }), null);
-    _$setProp2(_el$141, "width", "100%");
-    _$setProp2(_el$141, "gap", 2);
-    _$insert2(_el$141, _$createComponent2(SectionPanel, {
+    _$setProp2(_el$178, "width", "100%");
+    _$setProp2(_el$178, "gap", 2);
+    _$insert2(_el$178, _$createComponent2(SectionPanel, {
       title: "TOP PROJECTS",
       get subtitle() {
         return `${s().projects.length} active`;
@@ -5818,7 +6546,7 @@ function ActivitySection(props) {
         });
       }
     }), null);
-    _$insert2(_el$141, _$createComponent2(SectionPanel, {
+    _$insert2(_el$178, _$createComponent2(SectionPanel, {
       title: "HEAVIEST SESSIONS",
       subtitle: "top by cost",
       get theme() {
@@ -5865,17 +6593,17 @@ function ActivitySection(props) {
       }
     }), null);
     _$effect2((_p$) => {
-      var _v$53 = wide() ? "row" : "column", _v$54 = wide() ? "row" : "column", _v$55 = wide() ? "row" : "column";
-      _v$53 !== _p$.e && (_p$.e = _$setProp2(_el$139, "flexDirection", _v$53, _p$.e));
-      _v$54 !== _p$.t && (_p$.t = _$setProp2(_el$140, "flexDirection", _v$54, _p$.t));
-      _v$55 !== _p$.a && (_p$.a = _$setProp2(_el$141, "flexDirection", _v$55, _p$.a));
+      var _v$67 = wide() ? "row" : "column", _v$68 = wide() ? "row" : "column", _v$69 = wide() ? "row" : "column";
+      _v$67 !== _p$.e && (_p$.e = _$setProp2(_el$176, "flexDirection", _v$67, _p$.e));
+      _v$68 !== _p$.t && (_p$.t = _$setProp2(_el$177, "flexDirection", _v$68, _p$.t));
+      _v$69 !== _p$.a && (_p$.a = _$setProp2(_el$178, "flexDirection", _v$69, _p$.a));
       return _p$;
     }, {
       e: undefined,
       t: undefined,
       a: undefined
     });
-    return _el$138;
+    return _el$175;
   })();
 }
 
@@ -5901,8 +6629,12 @@ var TABS = [{
   key: "5",
   label: "Tools"
 }, {
-  id: "activity",
+  id: "mcp",
   key: "6",
+  label: "MCP"
+}, {
+  id: "activity",
+  key: "7",
   label: "Activity"
 }, {
   id: "all",
@@ -5927,7 +6659,7 @@ function DeepStatsScreen(props) {
   const [syncingGh, setSyncingGh] = createSignal(false);
   let scrollRef;
   let requestSeq = 0;
-  const contentWidth = createMemo3(() => Math.max(24, Math.min(116, dims().width - 6)));
+  const contentWidth = createMemo3(() => Math.max(24, Math.min(122, dims().width - 6)));
   const load = async (forceRefresh = false) => {
     const seq = ++requestSeq;
     const inputBase = {
@@ -6049,6 +6781,10 @@ function DeepStatsScreen(props) {
       run: () => selectTab("tools")
     }, {
       bind: "6",
+      title: "MCP tab",
+      run: () => selectTab("mcp")
+    }, {
+      bind: "7",
       title: "Activity tab",
       run: () => selectTab("activity")
     }, {
@@ -6414,6 +7150,21 @@ function DeepStatsScreen(props) {
                 }
               }), _$createComponent3(Match, {
                 get when() {
+                  return tab() === "mcp";
+                },
+                get children() {
+                  return _$createComponent3(McpSection, {
+                    get stats() {
+                      return data();
+                    },
+                    get width() {
+                      return contentWidth();
+                    },
+                    theme
+                  });
+                }
+              }), _$createComponent3(Match, {
+                get when() {
                   return tab() === "activity";
                 },
                 get children() {
@@ -6493,6 +7244,15 @@ function DeepStatsScreen(props) {
                     },
                     theme
                   }), null);
+                  _$insert3(_el$29, _$createComponent3(McpSection, {
+                    get stats() {
+                      return data();
+                    },
+                    get width() {
+                      return contentWidth();
+                    },
+                    theme
+                  }), null);
                   _$insert3(_el$29, _$createComponent3(ActivitySection, {
                     get stats() {
                       return data();
@@ -6523,7 +7283,7 @@ function DeepStatsScreen(props) {
     _$setProp3(_el$16, "selectable", false);
     _$insert3(_el$16, (() => {
       var _c$2 = _$memo3(() => contentWidth() >= 98);
-      return () => _c$2() ? "1-6/0 view \xB7 [/]/t range \xB7 p scope \xB7 h heat \xB7 m metric \xB7 v var \xB7 r refresh \xB7 j/k scroll \xB7 esc back" : contentWidth() >= 66 ? "1-6/0 view \xB7 t range \xB7 p scope \xB7 r refresh \xB7 j/k \xB7 esc back" : "1-6/0 \xB7 t range \xB7 r \xB7 esc";
+      return () => _c$2() ? "1-7/0 view \xB7 [/]/t range \xB7 p scope \xB7 h heat \xB7 m metric \xB7 v var \xB7 r refresh \xB7 j/k scroll \xB7 esc back" : contentWidth() >= 66 ? "1-7/0 view \xB7 t range \xB7 p scope \xB7 r refresh \xB7 j/k \xB7 esc back" : "1-7/0 \xB7 t range \xB7 r \xB7 esc";
     })());
     _$insert3(_el$15, _$createComponent3(Show3, {
       get when() {
@@ -6538,7 +7298,7 @@ function DeepStatsScreen(props) {
       }
     }), null);
     _$effect3((_p$) => {
-      var _v$4 = theme().background.base, _v$5 = contentWidth(), _v$6 = contentWidth() < 56 ? "column" : "row", _v$7 = theme().text.base, _v$8 = TextAttributes3.BOLD, _v$9 = theme().text.muted, _v$0 = contentWidth() < 108 ? "column" : "row", _v$1 = contentWidth(), _v$10 = theme().background.raised.base, _v$11 = contentWidth(), _v$12 = theme().text.muted;
+      var _v$4 = theme().background.base, _v$5 = contentWidth(), _v$6 = contentWidth() < 56 ? "column" : "row", _v$7 = theme().text.base, _v$8 = TextAttributes3.BOLD, _v$9 = theme().text.muted, _v$0 = contentWidth() < 118 ? "column" : "row", _v$1 = contentWidth(), _v$10 = theme().background.raised.base, _v$11 = contentWidth(), _v$12 = theme().text.muted;
       _v$4 !== _p$.e && (_p$.e = _$setProp3(_el$, "backgroundColor", _v$4, _p$.e));
       _v$5 !== _p$.t && (_p$.t = _$setProp3(_el$3, "width", _v$5, _p$.t));
       _v$6 !== _p$.a && (_p$.a = _$setProp3(_el$4, "flexDirection", _v$6, _p$.a));
@@ -6587,12 +7347,10 @@ function parseSlashArgs(input) {
   for (const tok of tokens) {
     if (tok === "7d" || tok === "30d" || tok === "90d" || tok === "ytd" || tok === "all") {
       range = tok;
-    } else if (tok === "overview" || tok === "tokens" || tok === "models" || tok === "github" || tok === "tools" || tok === "activity") {
+    } else if (tok === "overview" || tok === "tokens" || tok === "models" || tok === "github" || tok === "tools" || tok === "mcp" || tok === "activity") {
       tab = tok;
     } else if (tok === "pr" || tok === "prs") {
       tab = "github";
-    } else if (tok === "mcp") {
-      tab = "tools";
     } else if (tok === "hours") {
       tab = "activity";
     } else if (tok === "full") {

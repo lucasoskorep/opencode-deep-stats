@@ -104,6 +104,7 @@ export type AgentUsageRow = {
 export type ToolUsageRow = {
   name: string;
   isMcp: boolean;
+  mcpServer?: string;
   calls: number;
   succeeded: number;
   failed: number;
@@ -123,6 +124,31 @@ export type ToolSeriesBucket = {
   unfinished: number;
   errorPct: number;
   byTool: Record<string, number>;
+};
+
+export type McpServerRow = {
+  server: string;
+  toolsCount: number;
+  calls: number;
+  succeeded: number;
+  failed: number;
+  unfinished: number;
+  errorPct: number;
+  sharePct: number;
+  p50Ms?: number;
+  p95Ms?: number;
+  avgMs?: number;
+};
+
+export type McpSeriesBucket = {
+  key: string;
+  label: string;
+  totalCalls: number;
+  succeeded: number;
+  failed: number;
+  unfinished: number;
+  errorPct: number;
+  byServer: Record<string, number>;
 };
 
 export type HourlyBucket = {
@@ -312,6 +338,17 @@ export type DeepStatsPayload = {
   toolSeries: {
     topTools: string[];
     buckets: ToolSeriesBucket[];
+  };
+  mcp: {
+    totalCalls: number;
+    succeeded: number;
+    failed: number;
+    unfinished: number;
+    errorPct: number;
+    shareOfAllToolsPct: number;
+    servers: McpServerRow[];
+    topServers: string[];
+    buckets: McpSeriesBucket[];
   };
   agents: AgentUsageRow[];
   tools: ToolUsageRow[];

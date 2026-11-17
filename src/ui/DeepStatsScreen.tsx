@@ -14,13 +14,14 @@ import type {
 import {
   ActivitySection,
   GitHubSection,
+  McpSection,
   ModelsSection,
   OverviewSection,
   TokensSection,
   ToolsSection,
 } from "./sections.tsx";
 
-export type ViewTab = "overview" | "tokens" | "models" | "github" | "tools" | "activity" | "all";
+export type ViewTab = "overview" | "tokens" | "models" | "github" | "tools" | "mcp" | "activity" | "all";
 
 const TABS: Array<{ id: ViewTab; key: string; label: string }> = [
   { id: "overview", key: "1", label: "Overview" },
@@ -28,7 +29,8 @@ const TABS: Array<{ id: ViewTab; key: string; label: string }> = [
   { id: "models", key: "3", label: "Models" },
   { id: "github", key: "4", label: "GitHub" },
   { id: "tools", key: "5", label: "Tools" },
-  { id: "activity", key: "6", label: "Activity" },
+  { id: "mcp", key: "6", label: "MCP" },
+  { id: "activity", key: "7", label: "Activity" },
   { id: "all", key: "0", label: "All" },
 ];
 
@@ -72,7 +74,7 @@ export function DeepStatsScreen(props: {
   let scrollRef: ScrollBoxRenderable | undefined;
   let requestSeq = 0;
 
-  const contentWidth = createMemo(() => Math.max(24, Math.min(116, dims().width - 6)));
+  const contentWidth = createMemo(() => Math.max(24, Math.min(122, dims().width - 6)));
 
   const load = async (forceRefresh = false) => {
     const seq = ++requestSeq;
@@ -173,7 +175,8 @@ export function DeepStatsScreen(props: {
       { bind: "3", title: "Models tab", run: () => selectTab("models") },
       { bind: "4", title: "GitHub tab", run: () => selectTab("github") },
       { bind: "5", title: "Tools tab", run: () => selectTab("tools") },
-      { bind: "6", title: "Activity tab", run: () => selectTab("activity") },
+      { bind: "6", title: "MCP tab", run: () => selectTab("mcp") },
+      { bind: "7", title: "Activity tab", run: () => selectTab("activity") },
       { bind: "0", title: "All sections tab", run: () => selectTab("all") },
       { bind: "tab", title: "Next tab", run: () => cycleTab(1) },
       { bind: "shift+tab", title: "Previous tab", run: () => cycleTab(-1) },
@@ -245,7 +248,7 @@ export function DeepStatsScreen(props: {
 
           {/* Tabs + Time Range Controls */}
           <box
-            flexDirection={contentWidth() < 108 ? "column" : "row"}
+            flexDirection={contentWidth() < 118 ? "column" : "row"}
             justifyContent="space-between"
             width="100%"
             gap={1}
@@ -403,6 +406,9 @@ export function DeepStatsScreen(props: {
                   <Match when={tab() === "tools"}>
                     <ToolsSection stats={data()} width={contentWidth()} theme={theme} />
                   </Match>
+                  <Match when={tab() === "mcp"}>
+                    <McpSection stats={data()} width={contentWidth()} theme={theme} />
+                  </Match>
                   <Match when={tab() === "activity"}>
                     <ActivitySection stats={data()} width={contentWidth()} theme={theme} />
                   </Match>
@@ -425,6 +431,7 @@ export function DeepStatsScreen(props: {
                       />
                       <GitHubSection stats={data()} width={contentWidth()} theme={theme} />
                       <ToolsSection stats={data()} width={contentWidth()} theme={theme} />
+                      <McpSection stats={data()} width={contentWidth()} theme={theme} />
                       <ActivitySection stats={data()} width={contentWidth()} theme={theme} />
                     </box>
                   </Match>
@@ -451,10 +458,10 @@ export function DeepStatsScreen(props: {
         >
           <text fg={theme().text.muted} wrapMode="none" selectable={false}>
             {contentWidth() >= 98
-              ? "1-6/0 view · [/]/t range · p scope · h heat · m metric · v var · r refresh · j/k scroll · esc back"
+              ? "1-7/0 view · [/]/t range · p scope · h heat · m metric · v var · r refresh · j/k scroll · esc back"
               : contentWidth() >= 66
-                ? "1-6/0 view · t range · p scope · r refresh · j/k · esc back"
-                : "1-6/0 · t range · r · esc"}
+                ? "1-7/0 view · t range · p scope · r refresh · j/k · esc back"
+                : "1-7/0 · t range · r · esc"}
           </text>
           <Show when={contentWidth() >= 64}>
             <text fg={theme().text.base} selectable={false}>

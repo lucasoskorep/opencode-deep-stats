@@ -280,7 +280,7 @@ describe("DeepStatsAggregator & incremental SQLite rollup", () => {
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#xhigh");
     expect(split.models.map((m) => m.key)).toContain("google/gemini-4-hydrogen#medium");
 
-    // Tools: read, shell, jira_get_issue (MCP) & toolSeries
+    // Tools: read, shell, jira_get_issue (MCP) & toolSeries + mcp
     expect(grouped.tools.length).toBe(3);
     expect(grouped.toolSeries.topTools.length).toBe(3);
     expect(grouped.toolSeries.buckets.length).toBe(7);
@@ -288,7 +288,13 @@ describe("DeepStatsAggregator & incremental SQLite rollup", () => {
     expect(totalSeriesToolCalls).toBe(3);
     const jiraTool = grouped.tools.find((t) => t.name === "jira_get_issue");
     expect(jiraTool?.isMcp).toBe(true);
+    expect(jiraTool?.mcpServer).toBe("jira");
     expect(jiraTool?.errorPct).toBe(100);
+    expect(grouped.mcp.totalCalls).toBe(1);
+    expect(grouped.mcp.servers.length).toBe(1);
+    expect(grouped.mcp.servers[0]!.server).toBe("jira");
+    expect(grouped.mcp.servers[0]!.toolsCount).toBe(1);
+    expect(grouped.mcp.topServers).toEqual(["jira"]);
     const readTool = grouped.tools.find((t) => t.name === "read");
     expect(readTool?.isMcp).toBe(false);
     expect(readTool?.errorPct).toBe(0);
