@@ -36,7 +36,6 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts",
-    "prepack": "bun run build",
     "test": "bun test --conditions=browser --preload @opentui/solid/preload",
     "typecheck": "tsc --noEmit"
   },
